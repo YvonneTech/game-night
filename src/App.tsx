@@ -739,14 +739,16 @@ export default function App() {
               </span>
               <div className="round-bar-right">
                 <strong>{formatTime(timeLeft)}</strong>
-                <button
-                  className="exit-x"
-                  onClick={() => (host ? send("reset") : leaveRoom())}
-                  title={host ? "End game (back to lobby)" : "Leave the game"}
-                  aria-label={host ? "End game" : "Leave the game"}
-                >
-                  ✕
-                </button>
+                {host && (
+                  <button
+                    className="exit-x"
+                    onClick={() => send("reset")}
+                    title="End game (back to lobby)"
+                    aria-label="End game"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             </div>
             <div className="prompt-bar">
@@ -819,14 +821,16 @@ export default function App() {
               </span>
               <div className="round-bar-right">
                 <strong className={turnLeft <= 3 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</strong>
-                <button
-                  className="exit-x"
-                  onClick={() => (host ? send("reset") : leaveRoom())}
-                  title={host ? "End game (back to lobby)" : "Leave the game"}
-                  aria-label={host ? "End game" : "Leave the game"}
-                >
-                  ✕
-                </button>
+                {host && (
+                  <button
+                    className="exit-x"
+                    onClick={() => send("reset")}
+                    title="End game (back to lobby)"
+                    aria-label="End game"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             </div>
 

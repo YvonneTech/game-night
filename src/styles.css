@@ -742,8 +742,19 @@ canvas {
 .yarn-teams-mini .blue { color: #3f7fcf; }
 
 @media (max-width: 680px) {
-  .topbar { align-items: stretch; flex-direction: column; }
-  .room-strip { justify-content: flex-start; }
+  /* Compact single-row topbar on phones */
+  .topbar { min-height: 52px; padding: 8px 12px; gap: 8px; }
+  .brand { gap: 8px; }
+  .brand > div { min-width: 0; }
+  .brand-mark { width: 30px; height: 30px; border-radius: 8px; box-shadow: 1.5px 1.5px 0 var(--strong); }
+  .brand strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand span { display: none; }
+  .room-strip { gap: 6px; flex-wrap: nowrap; }
+  .status { display: none; }
+  .room-code-compact { min-height: 32px; padding: 3px 10px; box-shadow: 1.5px 1.5px 0 var(--yellow); }
+  .room-code-compact span { display: none; }
+  .room-code-compact strong { font-size: 16px; letter-spacing: 0.05em; }
+  .room-strip .small { min-height: 30px; padding: 5px 9px; }
   .word-options, .podium { grid-template-columns: 1fr; }
   .place-1, .place-2, .place-3 { grid-column: auto; order: initial; }
   .join-line, .guess-row { grid-template-columns: 1fr; }

@@ -952,7 +952,11 @@ export class GameRoom extends DurableObject<Env> {
 
   private makeRound(state: RoomState, number: number): Round {
     const mode: RoundMode =
-      state.mode === "mixed" ? (number % 2 === 1 ? "pictionary" : "charades") : state.mode;
+      state.mode === "mixed"
+        ? crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0
+          ? "pictionary"
+          : "charades"
+        : state.mode;
     const performer = state.players[(number - 1) % state.players.length];
     return {
       number,
@@ -997,8 +1001,15 @@ export class GameRoom extends DurableObject<Env> {
 
   private wordOptions(mode: RoundMode): string[] {
     const pool = mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS;
-    const offset = crypto.getRandomValues(new Uint8Array(1))[0];
-    return [0, 1, 2].map((step) => pool[(offset + step * 7) % pool.length]);
+    const picks: string[] = [];
+    const used = new Set<number>();
+    while (picks.length < 3 && used.size < pool.length) {
+      const i = crypto.getRandomValues(new Uint32Array(1))[0] % pool.length;
+      if (used.has(i)) continue;
+      used.add(i);
+      picks.push(pool[i]);
+    }
+    return picks;
   }
 
   private pickPhrase(): string {

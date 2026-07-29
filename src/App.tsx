@@ -737,7 +737,17 @@ export default function App() {
               <span>
                 Round {round.number}/{snapshot.rounds} · {round.mode}
               </span>
-              <strong>{formatTime(timeLeft)}</strong>
+              <div className="round-bar-right">
+                <strong>{formatTime(timeLeft)}</strong>
+                <button
+                  className="exit-x"
+                  onClick={() => (host ? send("reset") : leaveRoom())}
+                  title={host ? "End game (back to lobby)" : "Leave the game"}
+                  aria-label={host ? "End game" : "Leave the game"}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             <div className="prompt-bar">
               {snapshot.isPerformer ? (
@@ -807,7 +817,17 @@ export default function App() {
               <span>
                 Round {round.number}/{snapshot.rounds} · Pass the Pen
               </span>
-              <strong className={turnLeft <= 3 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</strong>
+              <div className="round-bar-right">
+                <strong className={turnLeft <= 3 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</strong>
+                <button
+                  className="exit-x"
+                  onClick={() => (host ? send("reset") : leaveRoom())}
+                  title={host ? "End game (back to lobby)" : "Leave the game"}
+                  aria-label={host ? "End game" : "Leave the game"}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <RelayStrip relay={snapshot.relay} turnIndex={round.turnIndex ?? 0} turnLeft={turnLeft} myId={id} />

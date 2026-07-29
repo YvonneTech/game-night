@@ -633,6 +633,21 @@ canvas {
 .prompt-label { font-size: 12px; font-weight: 850; text-transform: uppercase; color: var(--muted); }
 .pass-btn { white-space: nowrap; }
 
+/* In-game exit ✕ (Draw & Act / Pass the Pen) */
+.round-bar-right { display: flex; align-items: center; gap: 10px; }
+.exit-x {
+  width: 30px;
+  height: 30px;
+  border: 2.5px solid var(--strong);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 2px 0 var(--strong);
+  flex: none;
+}
+.exit-x:active { transform: translateY(2px); box-shadow: none; }
+
 /* Yarn Pals — teams announce */
 .yarn-count { font-size: 64px; margin: 4px 0 16px; }
 .teams-vs { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; }

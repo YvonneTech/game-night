@@ -389,14 +389,6 @@ export default function App() {
     connect(joinCode, false);
   }
 
-  function copyRoomCode() {
-    if (!room) return;
-    void navigator.clipboard
-      ?.writeText(room)
-      .then(() => showNotice(`Copied room code ${room}`, "success", 5000))
-      .catch(() => showNotice(`Room code: ${room}`));
-  }
-
   function copyInviteLink() {
     if (!room) return;
     const link = `${window.location.origin}/?room=${room}`;
@@ -449,8 +441,8 @@ export default function App() {
                 Reconnect
               </button>
             )}
-            <button className="secondary small" onClick={copyRoomCode}>
-              Copy
+            <button className="secondary small" onClick={copyInviteLink}>
+              Invite
             </button>
             <button className="secondary small" onClick={leaveRoom}>
               Leave
@@ -564,20 +556,6 @@ export default function App() {
 
       {phase === "lobby" && snapshot && (
         <main className="lobby">
-          <section className="share-card">
-            <div>
-              <span className="field-label">Room code</span>
-              <div className="big-code">{room}</div>
-            </div>
-            <div className="share-actions">
-              <button className="secondary" onClick={copyRoomCode}>
-                Copy code
-              </button>
-              <button className="primary" onClick={copyInviteLink}>
-                Copy invite link
-              </button>
-            </div>
-          </section>
           <section>
             <div className="section-head">
               <h1>Lobby</h1>

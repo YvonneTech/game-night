@@ -15,7 +15,7 @@ export type UCView = {
   candidates: string[];
   members: Array<{ id: string; name: string; alive: boolean; connected: boolean; voted: boolean }>;
   descriptions: Array<{ playerId: string; playerName: string; text: string }>;
-  eliminated: { name: string; role: "civ" | "spy"; word: string } | null;
+  eliminated: { name: string; role: "civ" | "spy" } | null;
   result: "civ" | "spy" | null;
   reveal: Array<{ name: string; role: "civ" | "spy"; word: string }> | null;
 };
@@ -161,8 +161,11 @@ export default function UndercoverGame({ view, myId, isHost, lang, send }: Props
                 </h2>
                 <p>
                   {zh
-                    ? `TA 是 ${view.eliminated.role === "spy" ? "卧底 🕵️" : "平民 🙂"},词是「${view.eliminated.word}」`
-                    : `They were ${view.eliminated.role === "spy" ? "an undercover 🕵️" : "a civilian 🙂"} — word: "${view.eliminated.word}"`}
+                    ? `TA 是 ${view.eliminated.role === "spy" ? "卧底 🕵️" : "平民 🙂"}`
+                    : `They were ${view.eliminated.role === "spy" ? "an undercover 🕵️" : "a civilian 🙂"}`}
+                </p>
+                <p className="muted">
+                  {zh ? "(词语等游戏结束才揭晓)" : "(words are revealed at the end)"}
                 </p>
               </div>
             )}

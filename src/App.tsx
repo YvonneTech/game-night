@@ -524,6 +524,11 @@ export default function App() {
               </div>
             </div>
 
+            <div className="you-preview">
+              <span className="you-dot" style={{ background: color }}>{initial(name)}</span>
+              <span>{name.trim() || "That's you"}</span>
+            </div>
+
             <div className="field">
               <span className="field-label">Game language</span>
               <div className="chips">
@@ -534,11 +539,6 @@ export default function App() {
                   中文
                 </button>
               </div>
-            </div>
-
-            <div className="you-preview">
-              <span className="you-dot" style={{ background: color }}>{initial(name)}</span>
-              <span>{name.trim() || "That's you"}</span>
             </div>
 
             <button

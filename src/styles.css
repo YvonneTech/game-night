@@ -216,7 +216,8 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 }
 .start-note { margin-top: 16px; border-style: dashed; background: transparent; text-align: center; }
 .setting-group h2 { margin: 0 0 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
-.setting-group div { display: flex; flex-wrap: wrap; gap: 8px; }
+.setting-group div { display: flex; flex-wrap: wrap; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 12px; }
 .chip {
   border: 3px solid var(--strong);
   border-radius: 999px;

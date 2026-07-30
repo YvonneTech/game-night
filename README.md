@@ -4,7 +4,7 @@ Party games for 2-6 friends — **five** quick multiplayer mini-games, playable 
 
 ## 🎮 Play it live
 
-**https://game-night.yarnpals.workers.dev**
+**https://game-night.yvonnetech.workers.dev**
 
 Create a room, share the invite link, and play together on your phones or laptops.
 

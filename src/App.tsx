@@ -477,7 +477,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img className="brand-mark" src="/favicon.svg" alt="Game Night" width={40} height={40} />
+          <img className="brand-mark" src="/logo-gn.svg" alt="Game Night" width={40} height={40} />
           <div>
             <strong>Game Night</strong>
             <span>Party games for 2-6 friends</span>

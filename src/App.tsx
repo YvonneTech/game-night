@@ -1040,11 +1040,11 @@ export default function App() {
             <h1>
               {snapshot.undercover?.result === "civ"
                 ? snapshot.lang === "zh"
-                  ? "平民获胜! 🙂"
-                  : "Civilians win! 🙂"
+                  ? "平民获胜 🎉"
+                  : "Civilians win 🎉"
                 : snapshot.lang === "zh"
-                  ? "卧底获胜! 🕵️"
-                  : "Undercover wins! 🕵️"}
+                  ? "卧底获胜 🕵️"
+                  : "Undercover wins 🕵️"}
             </h1>
             <div className="uc-reveal-list">
               {snapshot.undercover?.reveal?.map((r, i) => (

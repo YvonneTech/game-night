@@ -330,13 +330,13 @@ canvas {
   height: 486px;
   display: grid;
   place-items: center;
-  gap: 14px;
+  gap: 8px;
   padding: 24px;
   background: #f7fbff;
   text-align: center;
 }
 .charades-icon { font-size: 56px; line-height: 1; }
-.charades-hint { font-size: 13px; font-weight: 850; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.charades-hint { font-size: 18px; font-weight: 850; color: var(--ink); }
 .charades-card {
   max-width: 100%;
   border: 3px solid var(--strong);

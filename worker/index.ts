@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -86,6 +86,7 @@ type RoomState = {
   round: Round | null;
   yarn: YarnState | null;
   undercover: UndercoverState | null;
+  wavelength: WVState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -124,8 +125,41 @@ type UCView = {
   result: UCRole | null;
   reveal: Array<{ name: string; role: UCRole; word: string }> | null;
 };
-type Snapshot = Omit<RoomState, "undercover"> & {
+
+type WVState = {
+  sub: "clue" | "guess" | "reveal";
+  round: number;
+  total: number;
+  order: string[];
+  psychicIndex: number;
+  psychicId: string;
+  left: string;
+  right: string;
+  target: number;
+  clue: string;
+  guesses: Record<string, number>;
+};
+type WVView = {
+  sub: "clue" | "guess" | "reveal";
+  round: number;
+  total: number;
+  left: string;
+  right: string;
+  psychicName: string;
+  isPsychic: boolean;
+  target: number; // -1 when hidden
+  clue: string;
+  myGuess: number; // -1 when none
+  youClue: boolean;
+  youGuess: boolean;
+  submittedCount: number;
+  guessers: number;
+  results: Array<{ name: string; guess: number; points: number }> | null;
+  psychicPoints: number;
+};
+type Snapshot = Omit<RoomState, "undercover" | "wavelength"> & {
   undercover: UCView | null;
+  wavelength: WVView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -260,6 +294,40 @@ const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
     ["曲奇", "饼干"], ["尤克里里", "吉他"], ["蜜蜂", "黄蜂"], ["风筝", "气球"],
   ],
 };
+
+// Wavelength (心有灵犀): spectrum end-concepts [left, right].
+const WAVELENGTH_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
+  en: [
+    ["cold", "hot"], ["cheap", "expensive"], ["useless", "useful"], ["niche", "mainstream"],
+    ["hard", "easy"], ["dangerous", "safe"], ["ugly", "beautiful"], ["slow", "fast"],
+    ["old", "new"], ["weak", "strong"], ["quiet", "loud"], ["bitter", "sweet"],
+    ["ordinary", "magical"], ["boring", "fun"], ["fake", "real"], ["soft", "hard"],
+    ["light", "heavy"], ["dirty", "clean"], ["sad", "happy"], ["childish", "mature"],
+    ["portable", "bulky"], ["unhealthy", "healthy"], ["obscure", "famous"], ["simple", "complex"],
+    ["gentle", "intense"], ["cheap thing", "luxury"], ["realistic", "fantasy"], ["rare", "common"],
+    ["handmade", "mass-produced"], ["introvert", "extrovert"], ["frugal", "wasteful"],
+    ["traditional", "trendy"], ["overrated", "underrated"], ["temporary", "permanent"],
+  ],
+  zh: [
+    ["冷", "热"], ["便宜", "贵"], ["没用", "有用"], ["小众", "主流"],
+    ["难", "容易"], ["危险", "安全"], ["丑", "美"], ["慢", "快"],
+    ["旧", "新"], ["弱", "强"], ["安静", "吵闹"], ["苦", "甜"],
+    ["普通", "神奇"], ["无聊", "有趣"], ["假", "真"], ["软", "硬"],
+    ["轻", "重"], ["脏", "干净"], ["悲伤", "快乐"], ["幼稚", "成熟"],
+    ["便携", "笨重"], ["不健康", "健康"], ["冷门", "有名"], ["简单", "复杂"],
+    ["温和", "激烈"], ["便宜货", "奢侈品"], ["现实", "幻想"], ["罕见", "常见"],
+    ["手工", "量产"], ["内向", "外向"], ["省钱", "浪费"],
+    ["传统", "潮流"], ["被高估", "被低估"], ["短暂", "永久"],
+  ],
+};
+
+function wvPoints(guess: number, target: number): number {
+  const d = Math.abs(guess - target);
+  if (d <= 5) return 4;
+  if (d <= 12) return 3;
+  if (d <= 22) return 2;
+  return 0;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -406,6 +474,18 @@ export class GameRoom extends DurableObject<Env> {
         break;
       case "ucProceed":
         await this.ucProceed(ws);
+        break;
+      case "wvClue":
+        await this.wvClue(ws, command.payload);
+        break;
+      case "wvGuess":
+        await this.wvGuess(ws, command.payload);
+        break;
+      case "wvReveal":
+        await this.wvForceReveal(ws);
+        break;
+      case "wvNext":
+        await this.wvNext(ws);
         break;
       case "next":
         await this.next(ws);
@@ -582,7 +662,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "classic" ||
       payload.game === "passthepen" ||
       payload.game === "yarnpals" ||
-      payload.game === "undercover"
+      payload.game === "undercover" ||
+      payload.game === "wavelength"
     ) {
       state.game = payload.game;
     }
@@ -602,7 +683,8 @@ export class GameRoom extends DurableObject<Env> {
   private async start(ws: WebSocket): Promise<void> {
     const state = this.load();
     if (!this.isHost(ws, state)) return;
-    const minPlayers = state.game === "undercover" ? 4 : state.game === "passthepen" ? 3 : 2;
+    const minPlayers =
+      state.game === "undercover" ? 4 : state.game === "passthepen" || state.game === "wavelength" ? 3 : 2;
     if (state.players.length < minPlayers) {
       this.error(ws, `Need at least ${minPlayers} players.`);
       return;
@@ -628,7 +710,168 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "wavelength") {
+      this.startWavelength(state);
+      return;
+    }
+
     await this.beginRound(state, 1);
+  }
+
+  // ---------- Wavelength (心有灵犀) ----------
+  private startWavelength(state: RoomState): void {
+    const order = this.shuffleIds(state.players.map((p) => p.id));
+    state.wavelength = {
+      sub: "clue",
+      round: 0,
+      total: state.rounds,
+      order,
+      psychicIndex: -1,
+      psychicId: "",
+      left: "",
+      right: "",
+      target: 50,
+      clue: "",
+      guesses: {},
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.wvSetupRound(state, 1, 0);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private wvSetupRound(state: RoomState, round: number, psychicIndex: number): void {
+    const wv = state.wavelength;
+    if (!wv) return;
+    const pairs = WAVELENGTH_PAIRS[state.lang];
+    const pair = pairs[crypto.getRandomValues(new Uint32Array(1))[0] % pairs.length];
+    wv.round = round;
+    wv.psychicIndex = psychicIndex;
+    wv.psychicId = wv.order[psychicIndex % wv.order.length];
+    wv.left = pair[0];
+    wv.right = pair[1];
+    wv.target = 8 + (crypto.getRandomValues(new Uint32Array(1))[0] % 85); // 8..92
+    wv.clue = "";
+    wv.guesses = {};
+    wv.sub = "clue";
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `第 ${round} 轮:${this.playerName(state, wv.psychicId)} 出线索`
+        : `Round ${round}: ${this.playerName(state, wv.psychicId)} gives the clue`,
+    );
+  }
+
+  private async wvClue(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const wv = state.wavelength;
+    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "clue") return;
+    if (session.playerId !== wv.psychicId || !isRecord(payload)) return;
+    const clue = asText(payload.clue, "", 60);
+    if (!clue) return;
+    wv.clue = clue;
+    wv.sub = "guess";
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async wvGuess(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const wv = state.wavelength;
+    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "guess") return;
+    if (session.playerId === wv.psychicId || !isRecord(payload)) return;
+    if (!state.players.some((p) => p.id === session.playerId)) return;
+    const value = typeof payload.value === "number" ? Math.max(0, Math.min(100, Math.round(payload.value))) : 50;
+    wv.guesses[session.playerId] = value;
+
+    const guessers = state.players.filter((p) => p.id !== wv.psychicId).map((p) => p.id);
+    if (guessers.every((id) => wv.guesses[id] !== undefined)) {
+      this.wvResolve(state);
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async wvForceReveal(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const wv = state.wavelength;
+    if (!this.isHost(ws, state) || !wv || wv.sub !== "guess") return;
+    this.wvResolve(state);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private wvResolve(state: RoomState): void {
+    const wv = state.wavelength;
+    if (!wv) return;
+    let totalPts = 0;
+    let count = 0;
+    for (const [id, guess] of Object.entries(wv.guesses)) {
+      const pts = wvPoints(guess, wv.target);
+      const player = state.players.find((p) => p.id === id);
+      if (player) player.score += pts;
+      totalPts += pts;
+      count += 1;
+    }
+    const psychic = state.players.find((p) => p.id === wv.psychicId);
+    if (psychic && count > 0) psychic.score += Math.round(totalPts / count);
+    wv.sub = "reveal";
+  }
+
+  private async wvNext(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const wv = state.wavelength;
+    if (!this.isHost(ws, state) || !wv || wv.sub !== "reveal") return;
+    if (wv.round >= wv.total) {
+      state.phase = "gameEnd";
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+    this.wvSetupRound(state, wv.round + 1, wv.psychicIndex + 1);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private wvView(state: RoomState, playerId?: string): WVView | null {
+    const wv = state.wavelength;
+    if (state.game !== "wavelength" || !wv) return null;
+    const isPsychic = playerId === wv.psychicId;
+    const revealed = wv.sub === "reveal" || state.phase === "gameEnd";
+    const showTarget = isPsychic || revealed;
+    const guessers = state.players.filter((p) => p.id !== wv.psychicId).length;
+    return {
+      sub: wv.sub,
+      round: wv.round,
+      total: wv.total,
+      left: wv.left,
+      right: wv.right,
+      psychicName: this.playerName(state, wv.psychicId),
+      isPsychic,
+      target: showTarget ? wv.target : -1,
+      clue: wv.clue,
+      myGuess: playerId && wv.guesses[playerId] !== undefined ? wv.guesses[playerId] : -1,
+      youClue: isPsychic && wv.sub === "clue",
+      youGuess: !isPsychic && wv.sub === "guess" && !!playerId && wv.guesses[playerId] === undefined,
+      submittedCount: Object.keys(wv.guesses).length,
+      guessers,
+      results: revealed
+        ? Object.entries(wv.guesses).map(([id, guess]) => ({
+            name: this.playerName(state, id),
+            guess,
+            points: wvPoints(guess, wv.target),
+          }))
+        : null,
+      psychicPoints: (() => {
+        if (!revealed) return 0;
+        const vals = Object.values(wv.guesses);
+        if (vals.length === 0) return 0;
+        return Math.round(vals.reduce((s, g) => s + wvPoints(g, wv.target), 0) / vals.length);
+      })(),
+    };
   }
 
   // ---------- Undercover (谁是卧底) ----------
@@ -1117,6 +1360,7 @@ export class GameRoom extends DurableObject<Env> {
     state.round = null;
     state.yarn = null;
     state.undercover = null;
+    state.wavelength = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -1233,6 +1477,30 @@ export class GameRoom extends DurableObject<Env> {
         const eligible = this.ucEligibleVoters(state);
         if (eligible.length > 0 && eligible.every((id) => uc.votes[id])) {
           this.ucResolveVotes(state);
+        }
+      }
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+
+    // Wavelength: keep the round moving if a player drops out.
+    if (state.game === "wavelength" && state.wavelength && state.phase === "playing") {
+      const wv = state.wavelength;
+      wv.order = wv.order.filter((id) => id !== playerId);
+      delete wv.guesses[playerId];
+      if (state.players.length < 2) {
+        state.phase = "gameEnd";
+        this.save(state);
+        this.broadcast(state);
+        return;
+      }
+      if (playerId === wv.psychicId && wv.sub !== "reveal") {
+        this.wvSetupRound(state, wv.round, wv.psychicIndex % wv.order.length);
+      } else if (wv.sub === "guess") {
+        const guessers = state.players.filter((p) => p.id !== wv.psychicId).map((p) => p.id);
+        if (guessers.length > 0 && guessers.every((id) => wv.guesses[id] !== undefined)) {
+          this.wvResolve(state);
         }
       }
       this.save(state);
@@ -1494,6 +1762,7 @@ export class GameRoom extends DurableObject<Env> {
       ...state,
       round,
       undercover: this.ucView(state, playerId),
+      wavelength: this.wvView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -1598,6 +1867,7 @@ export class GameRoom extends DurableObject<Env> {
       round: null,
       yarn: null,
       undercover: null,
+      wavelength: null,
       solved: 0,
       messages: [],
       strokes: [],

@@ -14,6 +14,7 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **Pass the Pen** — one guesser, everyone else relay-draws the same secret; cooperative team score.
 - **Kitty Cup** — a frantic 3v3 yarn-ball soccer match with random teams (bots fill empty spots).
 - **Undercover (谁是卧底)** — everyone gets a secret word, but the undercover(s) get a similar different one. Describe your word, then vote out the spy. 4+ players.
+- **Wavelength (心有灵犀)** — one player gives a clue for a hidden spot on a spectrum (cold ↔ hot); everyone else slides to guess it. 3+ players.
 
 English or 中文 word banks, chosen when you create a room.
 

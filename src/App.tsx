@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YarnPalsGame, { YarnSlot } from "./YarnPalsGame";
 import UndercoverGame, { UCView } from "./UndercoverGame";
+import WavelengthGame, { WVView } from "./WavelengthGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "landing" | "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -77,6 +78,7 @@ type Snapshot = {
   round: Round | null;
   yarn: YarnState | null;
   undercover: UCView | null;
+  wavelength: WVView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -108,8 +110,8 @@ const COLORS = ["#4f7cff", "#e0576f", "#18a67d", "#f4c542", "#8b6be8", "#ef7d33"
 const ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
-  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup", undercover: "Undercover" },
-  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯", undercover: "谁是卧底" },
+  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup", undercover: "Undercover", wavelength: "Wavelength" },
+  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯", undercover: "谁是卧底", wavelength: "心有灵犀" },
 };
 
 const MODE_LABELS: Record<"en" | "zh", Record<GameMode, string>> = {
@@ -136,6 +138,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "Everyone gets a secret word — the undercover(s) get a similar but different one. Each round describe your word, then vote out who you think is the spy. Needs 4+ players.",
       scoring: "Civilians win by voting out every undercover; the undercover wins by surviving to the end.",
     },
+    wavelength: {
+      blurb:
+        "One player sees a hidden target on a spectrum (e.g. cold ↔ hot) and gives a clue; everyone else slides to guess where it is. Rotates each round. Needs 3+ players.",
+      scoring: "The closer your guess, the more points (bullseye 4 / near 3 / close 2). The clue-giver scores from the team average.",
+    },
   },
   zh: {
     classic: {
@@ -153,6 +160,10 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     undercover: {
       blurb: "每人拿到一个秘密词,卧底拿到的是相近但不同的词。每轮描述自己的词,再投票选出你认为的卧底。需 4 人以上。",
       scoring: "把所有卧底都投出局=平民赢;卧底撑到最后=卧底赢。",
+    },
+    wavelength: {
+      blurb: "一人看到刻度上的隐藏目标(如 冷 ↔ 热)并给线索,其他人拖滑块猜位置。每轮轮换。需 3 人以上。",
+      scoring: "猜得越近分越高(正中 4 / 很近 3 / 接近 2);线索人按大家平均表现得分。",
     },
   },
 };
@@ -243,7 +254,7 @@ export default function App() {
   const round = snapshot?.round ?? null;
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
-  const minPlayers = game === "undercover" ? 4 : game === "passthepen" ? 3 : 2;
+  const minPlayers = game === "undercover" ? 4 : game === "passthepen" || game === "wavelength" ? 3 : 2;
   const hasJoinCode = joinCode.trim().length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
@@ -625,7 +636,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals", "undercover"] as const).map((option) => (
+              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}
@@ -738,6 +749,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.undercover && game === "undercover" && (
         <UndercoverGame view={snapshot.undercover} myId={id} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.wavelength && game === "wavelength" && (
+        <WavelengthGame view={snapshot.wavelength} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (

@@ -567,12 +567,10 @@ canvas {
 .game-info p + p { margin-top: 8px; }
 .game-info-scoring { color: var(--muted); font-size: 13px; }
 .game-info-scoring span {
-  display: inline-block;
+  display: inline;
   font-weight: 850;
   color: var(--ink);
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: inherit;
   margin-right: 6px;
 }
 

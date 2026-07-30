@@ -42,6 +42,15 @@ export default function WavelengthGame({ view, isHost, lang, send }: Props) {
   };
   const submitGuess = () => send("wvGuess", { value: guess });
 
+  // Stagger labels vertically so close guesses don't overlap.
+  const sortedPins = (view.results ?? []).slice().sort((a, b) => a.guess - b.guess);
+  let lane = 0;
+  const pins = sortedPins.map((r, i) => {
+    if (i > 0 && Math.abs(r.guess - sortedPins[i - 1].guess) < 9) lane += 1;
+    else lane = 0;
+    return { ...r, lane };
+  });
+
   return (
     <main className="center">
       <section className="result-panel wv-panel">
@@ -59,10 +68,12 @@ export default function WavelengthGame({ view, isHost, lang, send }: Props) {
                 <div className="wv-target-line" style={{ left: `${view.target}%` }} />
               </>
             )}
-            {view.results?.map((r, i) => (
-              <div key={i} className="wv-pin" style={{ left: `${r.guess}%` }} title={`${r.name}: +${r.points}`}>
+            {pins.map((r, i) => (
+              <div key={i} className="wv-pin" style={{ left: `${r.guess}%` }}>
+                <span className="wv-pin-name" style={{ bottom: `${28 + r.lane * 20}px` }}>
+                  {r.name} +{r.points}
+                </span>
                 <span className="wv-pin-dot" />
-                <span className="wv-pin-name">{r.name}</span>
               </div>
             ))}
             {view.youGuess && (

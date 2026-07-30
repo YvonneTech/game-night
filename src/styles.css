@@ -249,7 +249,7 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 /* Wavelength (心有灵犀) */
 .wv-panel { text-align: center; display: flex; flex-direction: column; gap: 16px; }
 .wv-top { display: flex; justify-content: space-between; align-items: center; }
-.wv-bar-wrap { display: flex; align-items: center; gap: 10px; }
+.wv-bar-wrap { display: flex; align-items: center; gap: 10px; padding-top: 56px; }
 .wv-end { font-weight: 850; font-size: 13px; max-width: 22%; }
 .wv-bar {
   position: relative;
@@ -265,7 +265,7 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 .wv-pin { position: absolute; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; }
 .wv-pin-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--strong); border: 3px solid #fff; box-shadow: 0 0 0 1px var(--strong); }
 .wv-pin.you .wv-pin-dot { background: var(--rose); }
-.wv-pin-name { font-size: 10px; font-weight: 850; background: var(--strong); color: #fff; padding: 1px 5px; border-radius: 6px; margin-top: 2px; white-space: nowrap; }
+.wv-pin-name { position: absolute; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 850; background: var(--strong); color: #fff; padding: 1px 5px; border-radius: 6px; white-space: nowrap; }
 .wv-slider { width: 100%; }
 .wv-clue { margin: 0; font-size: 18px; }
 .wv-results { display: flex; flex-direction: column; gap: 8px; }

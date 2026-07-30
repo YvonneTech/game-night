@@ -31,6 +31,7 @@ type Round = {
   mode: RoundMode;
   performerId: string;
   word: string;
+  category?: string;
   options?: string[];
   startedAt: number;
   durationSeconds: number;
@@ -103,24 +104,44 @@ type Notice = {
 const COLORS = ["#4f7cff", "#e0576f", "#18a67d", "#f4c542", "#8b6be8", "#ef7d33"];
 const ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-const GAME_LABELS: Record<Game, string> = {
-  classic: "Draw & Act",
-  passthepen: "Pass the Pen",
-  yarnpals: "Kitty Cup",
+const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
+  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup" },
+  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯" },
 };
 
-const GAME_INFO: Record<Game, { blurb: string; scoring: string }> = {
-  classic: {
-    blurb: "Take turns: one player draws or acts a secret word while everyone else races to guess it in chat.",
-    scoring: "Guessers earn 100 / 80 / 60 / 40 / 20 by order; the performer earns +20 for each correct guess.",
+const MODE_LABELS: Record<"en" | "zh", Record<GameMode, string>> = {
+  en: { pictionary: "pictionary", charades: "charades", mixed: "mixed" },
+  zh: { pictionary: "你画我猜", charades: "你比我猜", mixed: "混合" },
+};
+
+const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: string }>> = {
+  en: {
+    classic: {
+      blurb: "Take turns: one player draws or acts a secret word while everyone else races to guess it in chat.",
+      scoring: "Guessers earn 100 / 80 / 60 / 40 / 20 by order; the performer earns +20 for each correct guess.",
+    },
+    passthepen: {
+      blurb: "One guesser, everyone else relay-draws the secret (~10-18s each), then a final 30s to guess. Needs 3+ players.",
+      scoring: "Guess it and the whole team scores — faster is worth more.",
+    },
+    yarnpals: {
+      blurb: "Chaotic 3v3 cat soccer — random teams, everyone drives a cat, knock the yarn ball into the other goal.",
+      scoring: "Most goals in 2 minutes wins.",
+    },
   },
-  passthepen: {
-    blurb: "One guesser, everyone else relay-draws the secret (~10-18s each), then a final 30s to guess. Needs 3+ players.",
-    scoring: "Guess it and the whole team scores — faster is worth more.",
-  },
-  yarnpals: {
-    blurb: "Chaotic 3v3 cat soccer — random teams, everyone drives a cat, knock the yarn ball into the other goal.",
-    scoring: "Most goals in 2 minutes wins.",
+  zh: {
+    classic: {
+      blurb: "轮流出题:一人画画或表演一个秘密词,其他人在聊天里抢答。",
+      scoring: "猜对按先后得 100 / 80 / 60 / 40 / 20 分;出题人每被猜对一次 +20。",
+    },
+    passthepen: {
+      blurb: "一人猜,其余人接力画同一个秘密(每人约 10–18 秒),最后再给猜的人 30 秒。需 3 人以上。",
+      scoring: "猜中时全队一起得分——越快分越高。",
+    },
+    yarnpals: {
+      blurb: "混乱的 3v3 猫咪足球——随机分队,每人操控一只猫,把毛线球顶进对方球门。",
+      scoring: "2 分钟内进球多者获胜。",
+    },
   },
 };
 
@@ -600,15 +621,15 @@ export default function App() {
                   title={!host ? hostOnlySettings : undefined}
                   onClick={() => changeSettings({ game: option })}
                 >
-                  {GAME_LABELS[option]}
+                  {GAME_LABELS[snapshot.lang][option]}
                 </button>
               ))}
             </SettingGroup>
             <div className="game-info">
-              <p>{GAME_INFO[snapshot.game].blurb}</p>
+              <p>{GAME_INFO[snapshot.lang][snapshot.game].blurb}</p>
               <p className="game-info-scoring">
-                <span>Scoring</span>
-                {GAME_INFO[snapshot.game].scoring}
+                <span>{snapshot.lang === "zh" ? "计分" : "Scoring"}</span>
+                {GAME_INFO[snapshot.lang][snapshot.game].scoring}
               </p>
             </div>
             {snapshot.game === "classic" && (
@@ -621,7 +642,7 @@ export default function App() {
                     title={!host ? hostOnlySettings : undefined}
                     onClick={() => changeSettings({ mode })}
                   >
-                    {mode}
+                    {MODE_LABELS[snapshot.lang][mode]}
                   </button>
                 ))}
               </SettingGroup>
@@ -645,7 +666,7 @@ export default function App() {
               Start
             </button>
             {host && players.length < minPlayers && (
-              <p className="settings-note start-note">Need at least {minPlayers} players to start {GAME_LABELS[game]}.</p>
+              <p className="settings-note start-note">Need at least {minPlayers} players to start {GAME_LABELS[snapshot.lang][game]}.</p>
             )}
           </section>
         </main>
@@ -654,7 +675,9 @@ export default function App() {
       {phase === "teams" && snapshot?.yarn && (
         <main className="center">
           <section className="result-panel wide">
-            <p className="eyebrow">Kitty Cup · teams drawn</p>
+            <p className="eyebrow">
+              {GAME_LABELS[snapshot.lang].yarnpals} · {snapshot.lang === "zh" ? "分队完成" : "teams drawn"}
+            </p>
             <h1 className="yarn-count">{teamCountdown > 0 ? teamCountdown : "GO!"}</h1>
             <div className="teams-vs">
               <div className="team-col pink">
@@ -705,7 +728,7 @@ export default function App() {
         <main className="center">
           <section className="result-panel">
             <p className="eyebrow">
-              Round {round.number}/{snapshot.rounds} · {round.mode}
+              Round {round.number}/{snapshot.rounds} · {MODE_LABELS[snapshot.lang][round.mode]}
             </p>
             {snapshot.isPerformer ? (
               <>
@@ -738,7 +761,7 @@ export default function App() {
           <section className="stage">
             <div className="round-bar">
               <span>
-                Round {round.number}/{snapshot.rounds} · {round.mode}
+                Round {round.number}/{snapshot.rounds} · {MODE_LABELS[snapshot.lang][round.mode]}
               </span>
               <div className="round-bar-right">
                 <strong>{formatTime(timeLeft)}</strong>
@@ -765,6 +788,11 @@ export default function App() {
                     submitGuess();
                   }}
                 >
+                  {round.category && (
+                    <span className="prompt-cat">
+                      {snapshot.lang === "zh" ? "类别" : "Category"}: {round.category}
+                    </span>
+                  )}
                   <code className="prompt-hint">{snapshot.hiddenWord}</code>
                   <span className="prompt-letters">
                     {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
@@ -822,7 +850,7 @@ export default function App() {
           <section className="stage">
             <div className="round-bar">
               <span>
-                Round {round.number}/{snapshot.rounds} · Pass the Pen
+                Round {round.number}/{snapshot.rounds} · {GAME_LABELS[snapshot.lang].passthepen}
               </span>
               <div className="round-bar-right">
                 <strong className={turnLeft <= 3 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</strong>

@@ -30,6 +30,7 @@ type Round = {
   mode: RoundMode;
   performerId: string;
   word: string;
+  category?: string;
   options?: string[];
   startedAt: number;
   durationSeconds: number;
@@ -105,58 +106,47 @@ const MAX_MESSAGES = 100;
 const SCORE_BY_RANK = [100, 80, 60, 40, 20];
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // recycle a room 10 min after everyone leaves
 
-type WordBank = { en: string[]; zh: string[] };
+type WordBank = { en: Record<string, string[]>; zh: Record<string, string[]> };
+type PhraseBank = { en: string[]; zh: string[] };
 
 const PICTIONARY_WORDS: WordBank = {
-  en: [
-    "rocket", "lighthouse", "roller coaster", "birthday cake", "submarine", "rainstorm",
-    "treasure map", "skateboard", "campfire", "greenhouse", "snow globe", "telescope",
-    "waterfall", "dragon", "spaceship", "windmill", "jellyfish", "treehouse", "volcano",
-    "suitcase", "sandcastle", "robot", "carousel", "hot air balloon", "cat", "dog", "sun",
-    "moon", "house", "tree", "apple", "guitar", "clock", "umbrella", "penguin", "cactus",
-    "igloo", "ghost", "castle", "butterfly", "snail", "elephant", "panda", "dinosaur",
-    "rainbow", "beach", "mountain", "key", "cupcake", "anchor", "mermaid", "unicorn",
-    "tornado", "scarecrow", "fire truck", "hamburger", "ice cream", "kite", "ladder",
-    "mailbox", "owl", "piano", "pumpkin", "shark", "snowflake", "spider web",
-    "traffic light", "trophy", "wizard hat", "yacht", "bicycle", "camera", "cactus pot",
-  ],
-  zh: [
-    "火箭", "灯塔", "过山车", "生日蛋糕", "潜水艇", "暴风雨", "藏宝图", "滑板", "篝火", "温室",
-    "雪花玻璃球", "望远镜", "瀑布", "龙", "飞船", "风车", "水母", "树屋", "火山", "行李箱",
-    "沙堡", "机器人", "旋转木马", "热气球", "猫", "狗", "太阳", "月亮", "房子", "树",
-    "苹果", "吉他", "时钟", "雨伞", "企鹅", "仙人掌", "冰屋", "幽灵", "城堡", "蝴蝶",
-    "蜗牛", "大象", "熊猫", "恐龙", "彩虹", "沙滩", "高山", "钥匙", "纸杯蛋糕", "船锚",
-    "美人鱼", "独角兽", "龙卷风", "稻草人", "消防车", "汉堡", "冰淇淋", "风筝", "梯子", "邮箱",
-    "猫头鹰", "钢琴", "南瓜", "鲨鱼", "雪花", "蜘蛛网", "红绿灯", "奖杯", "巫师帽", "游艇",
-    "自行车", "照相机", "长城",
-  ],
+  en: {
+    Animal: ["cat", "dog", "penguin", "butterfly", "snail", "elephant", "panda", "dinosaur", "owl", "shark", "jellyfish"],
+    Food: ["apple", "birthday cake", "cupcake", "hamburger", "ice cream", "pumpkin"],
+    Nature: ["sun", "moon", "tree", "waterfall", "volcano", "rainbow", "mountain", "tornado", "snowflake", "spider web", "rainstorm", "cactus"],
+    Object: ["guitar", "clock", "umbrella", "key", "anchor", "kite", "ladder", "mailbox", "piano", "trophy", "traffic light", "telescope", "snow globe", "treasure map", "skateboard", "suitcase", "camera", "scarecrow"],
+    Place: ["house", "igloo", "castle", "beach", "lighthouse", "treehouse", "greenhouse", "windmill", "roller coaster", "carousel", "sandcastle"],
+    Vehicle: ["rocket", "submarine", "spaceship", "hot air balloon", "fire truck", "yacht", "bicycle"],
+    Fantasy: ["dragon", "ghost", "mermaid", "robot", "unicorn", "wizard hat"],
+  },
+  zh: {
+    动物: ["猫", "狗", "企鹅", "蝴蝶", "蜗牛", "大象", "熊猫", "恐龙", "猫头鹰", "鲨鱼", "水母"],
+    食物: ["苹果", "生日蛋糕", "纸杯蛋糕", "汉堡", "冰淇淋", "南瓜"],
+    自然: ["太阳", "月亮", "树", "瀑布", "火山", "彩虹", "高山", "龙卷风", "雪花", "蜘蛛网", "暴风雨", "仙人掌"],
+    物品: ["吉他", "时钟", "雨伞", "钥匙", "船锚", "风筝", "梯子", "邮箱", "钢琴", "奖杯", "红绿灯", "望远镜", "雪花玻璃球", "藏宝图", "滑板", "行李箱", "照相机", "稻草人"],
+    地点: ["房子", "冰屋", "城堡", "沙滩", "灯塔", "树屋", "温室", "风车", "过山车", "旋转木马", "沙堡", "长城"],
+    交通: ["火箭", "潜水艇", "飞船", "热气球", "消防车", "游艇", "自行车"],
+    奇幻: ["龙", "幽灵", "美人鱼", "机器人", "独角兽", "巫师帽"],
+  },
 };
 
 const CHARADES_WORDS: WordBank = {
-  en: [
-    "opening a stuck jar", "walking through a spiderweb", "landing on the moon", "ice skating",
-    "finding a hidden key", "making pizza dough", "riding a horse", "taking a selfie",
-    "escaping quicksand", "directing traffic", "playing air guitar", "washing a window",
-    "climbing a mountain", "sneaking past a guard", "doing a magic trick", "juggling fruit",
-    "building a tent", "surfing a wave", "catching a butterfly", "fixing a robot",
-    "brushing teeth", "walking a dog", "doing yoga", "blowing out candles", "tying shoelaces",
-    "flying a kite", "fishing", "sneezing", "playing basketball", "baking cookies",
-    "chopping wood", "milking a cow", "conducting an orchestra", "scuba diving", "jumping rope",
-    "bowling", "playing tennis", "flipping a pancake", "painting a wall", "rowing a boat",
-    "shooting an arrow", "putting on makeup", "dancing ballet", "climbing a ladder", "boxing",
-  ],
-  zh: [
-    "打开卡住的罐子", "穿过蜘蛛网", "登上月球", "滑冰", "找到隐藏的钥匙", "揉披萨面团",
-    "骑马", "自拍", "从流沙里逃脱", "指挥交通", "弹空气吉他", "擦窗户", "爬山", "溜过警卫",
-    "变魔术", "杂耍水果", "搭帐篷", "冲浪", "抓蝴蝶", "修理机器人", "刷牙", "遛狗", "做瑜伽",
-    "吹蜡烛", "系鞋带", "放风筝", "钓鱼", "打喷嚏", "打篮球", "烤饼干", "劈柴", "挤牛奶",
-    "指挥乐队", "深海潜水", "跳绳", "打保龄球", "打网球", "翻煎饼", "刷墙", "划船", "射箭",
-    "化妆", "跳芭蕾", "爬梯子", "打拳击",
-  ],
+  en: {
+    Everyday: ["brushing teeth", "tying shoelaces", "blowing out candles", "sneezing", "putting on makeup", "washing a window", "opening a stuck jar", "baking cookies", "making pizza dough", "taking a selfie", "flipping a pancake"],
+    Sports: ["ice skating", "playing basketball", "surfing a wave", "bowling", "playing tennis", "jumping rope", "boxing", "scuba diving", "climbing a mountain"],
+    Talent: ["playing air guitar", "doing a magic trick", "juggling fruit", "conducting an orchestra", "dancing ballet", "shooting an arrow", "painting a wall"],
+    Outdoors: ["walking a dog", "riding a horse", "flying a kite", "fishing", "building a tent", "chopping wood", "milking a cow", "rowing a boat", "catching a butterfly", "directing traffic", "climbing a ladder", "sneaking past a guard", "walking through a spiderweb", "landing on the moon", "escaping quicksand", "doing yoga", "fixing a robot", "finding a hidden key"],
+  },
+  zh: {
+    日常: ["刷牙", "系鞋带", "吹蜡烛", "打喷嚏", "化妆", "擦窗户", "打开卡住的罐子", "烤饼干", "揉披萨面团", "自拍", "翻煎饼"],
+    运动: ["滑冰", "打篮球", "冲浪", "打保龄球", "打网球", "跳绳", "打拳击", "深海潜水", "爬山"],
+    才艺: ["弹空气吉他", "变魔术", "杂耍水果", "指挥乐队", "跳芭蕾", "射箭", "刷墙"],
+    户外: ["遛狗", "骑马", "放风筝", "钓鱼", "搭帐篷", "劈柴", "挤牛奶", "划船", "抓蝴蝶", "指挥交通", "爬梯子", "溜过警卫", "穿过蜘蛛网", "登上月球", "从流沙里逃脱", "做瑜伽", "修理机器人", "找到隐藏的钥匙"],
+  },
 };
 
 // Short, drawable scenes for the relay drawing game.
-const PASS_THE_PEN_PHRASES: WordBank = {
+const PASS_THE_PEN_PHRASES: PhraseBank = {
   en: [
     "a cat riding a skateboard", "sunset over the mountains", "a robot eating pizza",
     "an astronaut walking a dog", "a haunted house on a hill", "a dragon breathing fire",
@@ -639,6 +629,7 @@ export class GameRoom extends DurableObject<Env> {
     state.round = {
       ...state.round,
       word,
+      category: this.categoryOf(state.round.mode, state.lang, word),
       options: undefined,
       startedAt: Date.now(),
       hints: 0,
@@ -1010,16 +1001,25 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private wordOptions(mode: RoundMode, lang: Lang): string[] {
-    const pool = (mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS)[lang];
+    const bank = (mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS)[lang];
+    const words = Object.values(bank).flat();
     const picks: string[] = [];
     const used = new Set<number>();
-    while (picks.length < 3 && used.size < pool.length) {
-      const i = crypto.getRandomValues(new Uint32Array(1))[0] % pool.length;
+    while (picks.length < 3 && used.size < words.length) {
+      const i = crypto.getRandomValues(new Uint32Array(1))[0] % words.length;
       if (used.has(i)) continue;
       used.add(i);
-      picks.push(pool[i]);
+      picks.push(words[i]);
     }
     return picks;
+  }
+
+  private categoryOf(mode: RoundMode, lang: Lang, word: string): string {
+    const bank = (mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS)[lang];
+    for (const category of Object.keys(bank)) {
+      if (bank[category].includes(word)) return category;
+    }
+    return "";
   }
 
   private pickPhrase(lang: Lang): string {

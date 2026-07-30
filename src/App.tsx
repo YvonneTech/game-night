@@ -502,7 +502,7 @@ export default function App() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") createRoom();
+                  if (event.key === "Enter") (hasJoinCode ? joinRoom : createRoom)();
                 }}
                 maxLength={18}
                 placeholder="e.g. Alex"

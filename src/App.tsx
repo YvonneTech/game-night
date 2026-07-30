@@ -211,6 +211,7 @@ export default function App() {
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
   const minPlayers = game === "passthepen" ? 3 : 2;
+  const hasJoinCode = joinCode.trim().length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
     [players],
@@ -518,7 +519,10 @@ export default function App() {
               <span>{name.trim() || "That's you"}</span>
             </div>
 
-            <button className="primary block create-btn" onClick={createRoom}>
+            <button
+              className={`block create-btn ${hasJoinCode ? "secondary is-dimmed" : "primary"}`}
+              onClick={createRoom}
+            >
               Create a room
             </button>
 
@@ -538,7 +542,7 @@ export default function App() {
                   maxLength={8}
                   placeholder="ABCDE"
                 />
-                <button className="secondary" onClick={joinRoom}>
+                <button className={hasJoinCode ? "primary" : "secondary is-dimmed"} onClick={joinRoom}>
                   Join
                 </button>
               </div>

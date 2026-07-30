@@ -218,6 +218,7 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 .setting-group h2 { margin: 0 0 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .setting-group div { display: flex; flex-wrap: wrap; gap: 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 12px; }
+.is-dimmed { opacity: 0.5; transition: opacity 0.15s ease; }
 .chip {
   border: 3px solid var(--strong);
   border-radius: 999px;

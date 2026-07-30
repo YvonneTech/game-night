@@ -629,7 +629,7 @@ export default function App() {
             <div className="game-info">
               <p>{GAME_INFO[snapshot.lang][snapshot.game].blurb}</p>
               <p className="game-info-scoring">
-                <span>{snapshot.lang === "zh" ? "计分" : "Scoring"}</span>
+                <span>{snapshot.lang === "zh" ? "计分：" : "Scoring:"}</span>
                 {GAME_INFO[snapshot.lang][snapshot.game].scoring}
               </p>
             </div>

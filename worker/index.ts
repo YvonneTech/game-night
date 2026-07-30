@@ -68,7 +68,7 @@ type UndercoverState = {
   members: UCMember[];
   order: string[];
   turnIndex: number;
-  descriptions: Array<{ playerId: string; playerName: string; text: string }>;
+  descriptions: Array<{ playerId: string; playerName: string; text: string; passed?: boolean }>;
   votes: Record<string, string>;
   candidates: string[]; // non-empty during a tie runoff: only these are votable, and they can't vote
   eliminated: { id: string; name: string; role: UCRole; word: string } | null;
@@ -119,7 +119,7 @@ type UCView = {
   currentName: string;
   candidates: string[];
   members: UCMemberView[];
-  descriptions: Array<{ playerId: string; playerName: string; text: string }>;
+  descriptions: Array<{ playerId: string; playerName: string; text: string; passed?: boolean }>;
   eliminated: { name: string } | null;
   result: UCRole | null;
   reveal: Array<{ name: string; role: UCRole; word: string }> | null;
@@ -698,9 +698,11 @@ export class GameRoom extends DurableObject<Env> {
     if (session.playerId !== uc.order[uc.turnIndex]) return;
 
     const text = isRecord(payload) ? asText(payload.text, "", 120) : "";
+    const speaker = state.players.find((p) => p.id === session.playerId)?.name ?? "Player";
     if (text) {
-      const player = state.players.find((p) => p.id === session.playerId);
-      uc.descriptions.push({ playerId: session.playerId, playerName: player?.name ?? "Player", text });
+      uc.descriptions.push({ playerId: session.playerId, playerName: speaker, text });
+    } else {
+      uc.descriptions.push({ playerId: session.playerId, playerName: speaker, text: "", passed: true });
     }
 
     // Advance to the next ALIVE speaker; if the lap is done, go to voting.

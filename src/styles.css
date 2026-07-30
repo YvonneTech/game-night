@@ -232,6 +232,8 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 .uc-status { margin: 0; font-weight: 800; }
 .uc-log { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow-y: auto; text-align: left; }
 .uc-desc { border: 2px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; font-weight: 650; }
+.uc-pass { background: var(--panel-2); border-style: dashed; }
+.uc-pass em { font-style: normal; color: var(--muted); font-weight: 750; }
 .uc-describe-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
 .uc-vote-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .uc-vote-btn { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 46px; border: 3px solid var(--strong); border-radius: 10px; background: var(--panel); font-weight: 850; box-shadow: 0 3px 0 var(--strong); }

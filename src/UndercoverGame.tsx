@@ -14,7 +14,7 @@ export type UCView = {
   currentName: string;
   candidates: string[];
   members: Array<{ id: string; name: string; alive: boolean; connected: boolean; voted: boolean }>;
-  descriptions: Array<{ playerId: string; playerName: string; text: string }>;
+  descriptions: Array<{ playerId: string; playerName: string; text: string; passed?: boolean }>;
   eliminated: { name: string } | null;
   result: "civ" | "spy" | null;
   reveal: Array<{ name: string; role: "civ" | "spy"; word: string }> | null;
@@ -66,11 +66,19 @@ export default function UndercoverGame({ view, myId, isHost, lang, send }: Props
               {view.descriptions.length === 0 ? (
                 <p className="muted">{zh ? "还没有人描述" : "No clues yet"}</p>
               ) : (
-                view.descriptions.map((d, i) => (
-                  <div key={i} className="uc-desc">
-                    <strong>{d.playerName}:</strong> {d.text}
-                  </div>
-                ))
+                view.descriptions.map((d, i) =>
+                  d.passed ? (
+                    <div key={i} className="uc-desc uc-pass">
+                      <em>
+                        {d.playerName} {zh ? "说完了" : "finished"}
+                      </em>
+                    </div>
+                  ) : (
+                    <div key={i} className="uc-desc">
+                      <strong>{d.playerName}:</strong> {d.text}
+                    </div>
+                  ),
+                )
               )}
             </div>
             {view.youSpeak && (

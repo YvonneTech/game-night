@@ -796,7 +796,7 @@ export default function App() {
                       </span>
                       {round.category && (
                         <span className="prompt-cat">
-                          {snapshot.lang === "zh" ? "类别" : "Category"}: {round.category}
+                          {snapshot.lang === "zh" ? `类别：${round.category}` : `Category: ${round.category}`}
                         </span>
                       )}
                     </>

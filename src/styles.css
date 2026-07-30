@@ -249,7 +249,8 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 /* Wavelength (心有灵犀) */
 .wv-panel { text-align: center; display: flex; flex-direction: column; gap: 16px; }
 .wv-top { display: flex; justify-content: space-between; align-items: center; }
-.wv-bar-wrap { display: flex; align-items: center; gap: 10px; padding-top: 56px; }
+.wv-bar-wrap { display: flex; align-items: center; gap: 10px; padding-top: 8px; }
+.wv-bar-wrap.reveal { padding-top: 96px; }
 .wv-end { font-weight: 850; font-size: 13px; max-width: 22%; }
 .wv-bar {
   position: relative;

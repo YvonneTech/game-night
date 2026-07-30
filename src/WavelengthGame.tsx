@@ -69,7 +69,7 @@ export default function WavelengthGame({ view, isHost, lang, send }: Props) {
           )}
         </div>
 
-        <div className="wv-bar-wrap">
+        <div className={`wv-bar-wrap ${view.sub === "reveal" ? "reveal" : ""}`}>
           <span className="wv-end">{view.left}</span>
           <div className="wv-bar">
             {view.target >= 0 && (
@@ -80,7 +80,7 @@ export default function WavelengthGame({ view, isHost, lang, send }: Props) {
             )}
             {pins.map((r, i) => (
               <div key={i} className="wv-pin" style={{ left: `${r.guess}%` }}>
-                <span className="wv-pin-name" style={{ bottom: `${28 + r.lane * 20}px` }}>
+                <span className="wv-pin-name" style={{ bottom: `${40 + r.lane * 18}px` }}>
                   {r.name} +{r.points}
                 </span>
                 <span className="wv-pin-dot" />

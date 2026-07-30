@@ -44,6 +44,16 @@ export default function UndercoverGame({ view, myId, isHost, lang, send }: Props
             🕵️ {zh ? `${view.spyCount} 个卧底` : `${view.spyCount} undercover${view.spyCount > 1 ? "s" : ""}`}
           </span>
           <span className="uc-round">{zh ? `第 ${view.round} 轮` : `Round ${view.round}`}</span>
+          {isHost && (
+            <button
+              className="exit-x"
+              onClick={() => send("reset")}
+              title={zh ? "结束本局(回大厅)" : "End game (back to lobby)"}
+              aria-label="End game"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         <div className="uc-word">

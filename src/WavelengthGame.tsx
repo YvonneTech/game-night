@@ -57,6 +57,16 @@ export default function WavelengthGame({ view, isHost, lang, send }: Props) {
         <div className="wv-top">
           <span className="uc-round">{zh ? `第 ${view.round}/${view.total} 轮` : `Round ${view.round}/${view.total}`}</span>
           <span className="uc-round">{view.psychicName}{zh ? " 出线索" : " gives the clue"}</span>
+          {isHost && (
+            <button
+              className="exit-x"
+              onClick={() => send("reset")}
+              title={zh ? "结束本局(回大厅)" : "End game (back to lobby)"}
+              aria-label="End game"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         <div className="wv-bar-wrap">

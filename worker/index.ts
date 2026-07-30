@@ -151,37 +151,37 @@ type PhraseBank = { en: string[]; zh: string[] };
 
 const PICTIONARY_WORDS: WordBank = {
   en: {
-    Animal: ["cat", "dog", "penguin", "butterfly", "snail", "elephant", "panda", "dinosaur", "owl", "shark", "jellyfish"],
-    Food: ["apple", "birthday cake", "cupcake", "hamburger", "ice cream", "pumpkin"],
-    Nature: ["sun", "moon", "tree", "waterfall", "volcano", "rainbow", "mountain", "tornado", "snowflake", "spider web", "rainstorm", "cactus"],
-    Object: ["guitar", "clock", "umbrella", "key", "anchor", "kite", "ladder", "mailbox", "piano", "trophy", "traffic light", "telescope", "snow globe", "treasure map", "skateboard", "suitcase", "camera", "scarecrow"],
-    Place: ["house", "igloo", "castle", "beach", "lighthouse", "treehouse", "greenhouse", "windmill", "roller coaster", "carousel", "sandcastle"],
-    Vehicle: ["rocket", "submarine", "spaceship", "hot air balloon", "fire truck", "yacht", "bicycle"],
-    Fantasy: ["dragon", "ghost", "mermaid", "robot", "unicorn", "wizard hat"],
+    Animal: ["cat", "dog", "penguin", "butterfly", "snail", "elephant", "panda", "dinosaur", "owl", "shark", "jellyfish", "rabbit", "frog", "bee", "fox", "whale", "crocodile", "dolphin", "peacock"],
+    Food: ["apple", "birthday cake", "cupcake", "hamburger", "ice cream", "pumpkin", "banana", "donut", "sushi", "noodles", "egg", "corn", "lollipop", "pineapple"],
+    Nature: ["sun", "moon", "tree", "waterfall", "volcano", "rainbow", "mountain", "tornado", "snowflake", "spider web", "rainstorm", "cactus", "cloud", "star", "island", "cave", "forest", "river", "lightning"],
+    Object: ["guitar", "clock", "umbrella", "key", "anchor", "kite", "ladder", "mailbox", "piano", "trophy", "traffic light", "telescope", "snow globe", "treasure map", "skateboard", "suitcase", "camera", "scarecrow", "scissors", "hammer", "balloon", "backpack", "toothbrush", "headphones", "candle"],
+    Place: ["house", "igloo", "castle", "beach", "lighthouse", "treehouse", "greenhouse", "windmill", "roller coaster", "carousel", "sandcastle", "bridge", "aquarium", "stadium", "farm", "hospital", "school"],
+    Vehicle: ["rocket", "submarine", "spaceship", "hot air balloon", "fire truck", "yacht", "bicycle", "train", "helicopter", "tractor", "scooter", "canoe", "ambulance"],
+    Fantasy: ["dragon", "ghost", "mermaid", "robot", "unicorn", "wizard hat", "witch", "fairy", "zombie", "alien", "genie", "phoenix"],
   },
   zh: {
-    动物: ["猫", "狗", "企鹅", "蝴蝶", "蜗牛", "大象", "熊猫", "恐龙", "猫头鹰", "鲨鱼", "水母"],
-    食物: ["苹果", "生日蛋糕", "纸杯蛋糕", "汉堡", "冰淇淋", "南瓜"],
-    自然: ["太阳", "月亮", "树", "瀑布", "火山", "彩虹", "高山", "龙卷风", "雪花", "蜘蛛网", "暴风雨", "仙人掌"],
-    物品: ["吉他", "时钟", "雨伞", "钥匙", "船锚", "风筝", "梯子", "邮箱", "钢琴", "奖杯", "红绿灯", "望远镜", "雪花玻璃球", "藏宝图", "滑板", "行李箱", "照相机", "稻草人"],
-    地点: ["房子", "冰屋", "城堡", "沙滩", "灯塔", "树屋", "温室", "风车", "过山车", "旋转木马", "沙堡", "长城"],
-    交通: ["火箭", "潜水艇", "飞船", "热气球", "消防车", "游艇", "自行车"],
-    奇幻: ["龙", "幽灵", "美人鱼", "机器人", "独角兽", "巫师帽"],
+    动物: ["猫", "狗", "企鹅", "蝴蝶", "蜗牛", "大象", "熊猫", "恐龙", "猫头鹰", "鲨鱼", "水母", "兔子", "青蛙", "蜜蜂", "狐狸", "鲸鱼", "鳄鱼", "海豚", "孔雀"],
+    食物: ["苹果", "生日蛋糕", "纸杯蛋糕", "汉堡", "冰淇淋", "南瓜", "香蕉", "甜甜圈", "寿司", "面条", "鸡蛋", "玉米", "棒棒糖", "菠萝"],
+    自然: ["太阳", "月亮", "树", "瀑布", "火山", "彩虹", "高山", "龙卷风", "雪花", "蜘蛛网", "暴风雨", "仙人掌", "云", "星星", "岛屿", "山洞", "森林", "河流", "闪电"],
+    物品: ["吉他", "时钟", "雨伞", "钥匙", "船锚", "风筝", "梯子", "邮箱", "钢琴", "奖杯", "红绿灯", "望远镜", "雪花玻璃球", "藏宝图", "滑板", "行李箱", "照相机", "稻草人", "剪刀", "锤子", "气球", "背包", "牙刷", "耳机", "蜡烛"],
+    地点: ["房子", "冰屋", "城堡", "沙滩", "灯塔", "树屋", "温室", "风车", "过山车", "旋转木马", "沙堡", "长城", "桥", "水族馆", "体育场", "农场", "医院", "学校"],
+    交通: ["火箭", "潜水艇", "飞船", "热气球", "消防车", "游艇", "自行车", "火车", "直升机", "拖拉机", "滑板车", "独木舟", "救护车"],
+    奇幻: ["龙", "幽灵", "美人鱼", "机器人", "独角兽", "巫师帽", "女巫", "仙女", "僵尸", "外星人", "神灯精灵", "凤凰"],
   },
 };
 
 const CHARADES_WORDS: WordBank = {
   en: {
-    Everyday: ["brushing teeth", "tying shoelaces", "blowing out candles", "sneezing", "putting on makeup", "washing a window", "opening a stuck jar", "baking cookies", "making pizza dough", "taking a selfie", "flipping a pancake"],
-    Sports: ["ice skating", "playing basketball", "surfing a wave", "bowling", "playing tennis", "jumping rope", "boxing", "scuba diving", "climbing a mountain"],
-    Talent: ["playing air guitar", "doing a magic trick", "juggling fruit", "conducting an orchestra", "dancing ballet", "shooting an arrow", "painting a wall"],
-    Outdoors: ["walking a dog", "riding a horse", "flying a kite", "fishing", "building a tent", "chopping wood", "milking a cow", "rowing a boat", "catching a butterfly", "directing traffic", "climbing a ladder", "sneaking past a guard", "walking through a spiderweb", "landing on the moon", "escaping quicksand", "doing yoga", "fixing a robot", "finding a hidden key"],
+    Everyday: ["brushing teeth", "tying shoelaces", "blowing out candles", "sneezing", "putting on makeup", "washing a window", "opening a stuck jar", "baking cookies", "making pizza dough", "taking a selfie", "flipping a pancake", "combing hair", "vacuuming", "ironing a shirt", "peeling a banana", "stirring soup"],
+    Sports: ["ice skating", "playing basketball", "surfing a wave", "bowling", "playing tennis", "jumping rope", "boxing", "scuba diving", "climbing a mountain", "swimming", "skiing", "doing push-ups", "kicking a soccer ball", "lifting weights"],
+    Talent: ["playing air guitar", "doing a magic trick", "juggling fruit", "conducting an orchestra", "dancing ballet", "shooting an arrow", "painting a wall", "playing the drums", "doing a cartwheel", "spinning a basketball"],
+    Outdoors: ["walking a dog", "riding a horse", "flying a kite", "fishing", "building a tent", "chopping wood", "milking a cow", "rowing a boat", "catching a butterfly", "directing traffic", "climbing a ladder", "sneaking past a guard", "walking through a spiderweb", "landing on the moon", "escaping quicksand", "doing yoga", "fixing a robot", "finding a hidden key", "planting a tree", "raking leaves", "paddling a kayak", "hailing a taxi"],
   },
   zh: {
-    日常: ["刷牙", "系鞋带", "吹蜡烛", "打喷嚏", "化妆", "擦窗户", "打开卡住的罐子", "烤饼干", "揉披萨面团", "自拍", "翻煎饼"],
-    运动: ["滑冰", "打篮球", "冲浪", "打保龄球", "打网球", "跳绳", "打拳击", "深海潜水", "爬山"],
-    才艺: ["弹空气吉他", "变魔术", "杂耍水果", "指挥乐队", "跳芭蕾", "射箭", "刷墙"],
-    户外: ["遛狗", "骑马", "放风筝", "钓鱼", "搭帐篷", "劈柴", "挤牛奶", "划船", "抓蝴蝶", "指挥交通", "爬梯子", "溜过警卫", "穿过蜘蛛网", "登上月球", "从流沙里逃脱", "做瑜伽", "修理机器人", "找到隐藏的钥匙"],
+    日常: ["刷牙", "系鞋带", "吹蜡烛", "打喷嚏", "化妆", "擦窗户", "打开卡住的罐子", "烤饼干", "揉披萨面团", "自拍", "翻煎饼", "梳头", "吸尘", "熨衬衫", "剥香蕉", "搅汤"],
+    运动: ["滑冰", "打篮球", "冲浪", "打保龄球", "打网球", "跳绳", "打拳击", "深海潜水", "爬山", "游泳", "滑雪", "做俯卧撑", "踢足球", "举重"],
+    才艺: ["弹空气吉他", "变魔术", "杂耍水果", "指挥乐队", "跳芭蕾", "射箭", "刷墙", "打鼓", "侧手翻", "转篮球"],
+    户外: ["遛狗", "骑马", "放风筝", "钓鱼", "搭帐篷", "劈柴", "挤牛奶", "划船", "抓蝴蝶", "指挥交通", "爬梯子", "溜过警卫", "穿过蜘蛛网", "登上月球", "从流沙里逃脱", "做瑜伽", "修理机器人", "找到隐藏的钥匙", "种树", "耙树叶", "划皮划艇", "打车"],
   },
 };
 
@@ -201,7 +201,11 @@ const PASS_THE_PEN_PHRASES: PhraseBank = {
     "a panda eating ice cream", "a cactus wearing a hat", "a turtle winning a race",
     "a ninja in a library", "a vampire at the beach", "a duck driving a bus",
     "a robot walking a dinosaur", "a chef juggling tomatoes", "a kangaroo boxing a robot",
-    "a lion getting a haircut",
+    "a lion getting a haircut", "a cat playing chess", "a dog delivering mail",
+    "a robot watering plants", "an elephant on a trampoline", "a penguin baking a cake",
+    "a shark reading a map", "a wizard riding a scooter", "a dinosaur painting a fence",
+    "a snowman surfing", "a fox flying a kite", "a bear playing basketball",
+    "a mermaid combing her hair",
   ],
   zh: [
     "一只猫在滑滑板", "山顶的日落", "机器人在吃披萨", "宇航员在遛狗", "山上的鬼屋",
@@ -212,6 +216,9 @@ const PASS_THE_PEN_PHRASES: PhraseBank = {
     "冲浪的狗", "骑自行车的长颈鹿", "夏天融化的雪人", "画彩虹的仙女", "和蜗牛决斗的骑士",
     "吃冰淇淋的熊猫", "戴帽子的仙人掌", "跑赢比赛的乌龟", "图书馆里的忍者", "沙滩上的吸血鬼",
     "开公交车的鸭子", "遛恐龙的机器人", "杂耍番茄的厨师", "和机器人拳击的袋鼠", "理发的狮子",
+    "下棋的猫", "送信的狗", "给植物浇水的机器人", "在蹦床上的大象", "烤蛋糕的企鹅",
+    "看地图的鲨鱼", "骑滑板车的巫师", "刷栅栏的恐龙", "冲浪的雪人", "放风筝的狐狸",
+    "打篮球的熊", "梳头的美人鱼",
   ],
 };
 
@@ -235,6 +242,9 @@ const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
     ["umbrella", "tent"], ["chocolate", "candy"], ["watch", "alarm clock"], ["plane", "rocket"],
     ["subway", "bus"], ["giraffe", "zebra"], ["hotpot", "barbecue"], ["snowman", "ice sculpture"],
     ["strawberry", "cherry"], ["lion", "leopard"], ["violin", "cello"], ["toothpaste", "face wash"],
+    ["pancake", "waffle"], ["orange", "tangerine"], ["frog", "toad"], ["hat", "helmet"],
+    ["scarf", "tie"], ["duck", "goose"], ["magician", "clown"], ["library", "bookstore"],
+    ["cookie", "biscuit"], ["ukulele", "guitar"], ["bee", "wasp"], ["kite", "balloon"],
   ],
   zh: [
     ["猫", "老虎"], ["咖啡", "奶茶"], ["苹果", "梨"], ["可乐", "雪碧"],
@@ -245,6 +255,9 @@ const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
     ["雨伞", "帐篷"], ["巧克力", "糖果"], ["手表", "闹钟"], ["飞机", "火箭"],
     ["地铁", "公交车"], ["长颈鹿", "斑马"], ["火锅", "烧烤"], ["雪人", "冰雕"],
     ["草莓", "樱桃"], ["狮子", "豹子"], ["小提琴", "大提琴"], ["牙膏", "洗面奶"],
+    ["煎饼", "华夫饼"], ["橙子", "橘子"], ["青蛙", "蟾蜍"], ["帽子", "头盔"],
+    ["围巾", "领带"], ["鸭子", "鹅"], ["魔术师", "小丑"], ["图书馆", "书店"],
+    ["曲奇", "饼干"], ["尤克里里", "吉他"], ["蜜蜂", "黄蜂"], ["风筝", "气球"],
   ],
 };
 

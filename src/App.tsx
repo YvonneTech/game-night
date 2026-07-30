@@ -551,13 +551,23 @@ export default function App() {
               <span>{name.trim() || "That's you"}</span>
             </div>
 
-            <div className="field">
-              <span className="field-label">Game language</span>
+            <div className={`field ${hasJoinCode ? "is-dimmed" : ""}`}>
+              <span className="field-label">
+                Game language{hasJoinCode ? " · set by the room's host" : ""}
+              </span>
               <div className="chips">
-                <button className={lang === "en" ? "chip active" : "chip"} onClick={() => setLang("en")}>
+                <button
+                  className={lang === "en" ? "chip active" : "chip"}
+                  disabled={hasJoinCode}
+                  onClick={() => setLang("en")}
+                >
                   English
                 </button>
-                <button className={lang === "zh" ? "chip active" : "chip"} onClick={() => setLang("zh")}>
+                <button
+                  className={lang === "zh" ? "chip active" : "chip"}
+                  disabled={hasJoinCode}
+                  onClick={() => setLang("zh")}
+                >
                   中文
                 </button>
               </div>

@@ -663,7 +663,7 @@ export default function App() {
                 ))}
               </SettingGroup>
             )}
-            <button className="primary" disabled={!host || players.length < minPlayers} onClick={() => send("start")}>
+            <button className="primary block create-btn" disabled={!host || players.length < minPlayers} onClick={() => send("start")}>
               Start
             </button>
             {host && players.length < minPlayers && (

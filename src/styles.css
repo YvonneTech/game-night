@@ -202,8 +202,7 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
 .player div { flex: 1; min-width: 0; }
 .player strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player small { display: block; color: var(--muted); font-weight: 800; text-transform: uppercase; }
-.settings { padding: 16px; align-self: start; }
-.settings > * + * { margin-top: 14px; }
+.settings { padding: 18px; align-self: start; display: flex; flex-direction: column; gap: 16px; }
 .settings-note {
   margin: 0;
   border: 2px solid var(--line);
@@ -214,9 +213,9 @@ input:focus { box-shadow: 0 0 0 3px var(--yellow); }
   font-size: 13px;
   font-weight: 850;
 }
-.start-note { margin-top: 16px; border-style: dashed; background: transparent; text-align: center; }
-.setting-group h2 { margin: 0 0 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
-.setting-group div { display: flex; flex-wrap: wrap; gap: 12px; }
+.start-note { margin-top: 0; border-style: dashed; background: transparent; text-align: center; }
+.setting-group h2 { margin: 0 0 10px; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.setting-group div { display: flex; flex-wrap: wrap; gap: 10px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .is-dimmed { opacity: 0.5; transition: opacity 0.15s ease; }
 .coop-result { margin: 10px 0 18px; }
@@ -560,8 +559,8 @@ canvas {
   border: 3px solid var(--strong);
   border-radius: 8px;
   background: var(--panel-2);
-  padding: 12px 14px;
-  margin: 4px 0;
+  padding: 14px;
+  margin: 0;
 }
 .game-info p { margin: 0; font-weight: 650; color: var(--ink); line-height: 1.5; }
 .game-info p + p { margin-top: 8px; }

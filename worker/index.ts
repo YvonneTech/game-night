@@ -120,7 +120,7 @@ type UCView = {
   candidates: string[];
   members: UCMemberView[];
   descriptions: Array<{ playerId: string; playerName: string; text: string }>;
-  eliminated: { name: string; role: UCRole } | null;
+  eliminated: { name: string } | null;
   result: UCRole | null;
   reveal: Array<{ name: string; role: UCRole; word: string }> | null;
 };
@@ -1528,7 +1528,7 @@ export class GameRoom extends DurableObject<Env> {
       candidates: uc.candidates,
       members,
       descriptions: uc.descriptions,
-      eliminated: uc.eliminated ? { name: uc.eliminated.name, role: uc.eliminated.role } : null,
+      eliminated: uc.eliminated ? { name: uc.eliminated.name } : null,
       result: uc.result,
       reveal: gameOver
         ? uc.members.map((m) => ({

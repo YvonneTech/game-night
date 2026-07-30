@@ -15,7 +15,7 @@ export type UCView = {
   candidates: string[];
   members: Array<{ id: string; name: string; alive: boolean; connected: boolean; voted: boolean }>;
   descriptions: Array<{ playerId: string; playerName: string; text: string }>;
-  eliminated: { name: string; role: "civ" | "spy" } | null;
+  eliminated: { name: string } | null;
   result: "civ" | "spy" | null;
   reveal: Array<{ name: string; role: "civ" | "spy"; word: string }> | null;
 };
@@ -105,7 +105,7 @@ export default function UndercoverGame({ view, myId, isHost, lang, send }: Props
             </p>
             <div className="uc-vote-grid">
               {view.members
-                .filter((m) => m.alive)
+                .filter((m) => m.alive && m.id !== myId)
                 .map((m) => {
                   const votable =
                     view.youVote && (view.candidates.length === 0 || view.candidates.includes(m.id));
@@ -160,12 +160,16 @@ export default function UndercoverGame({ view, myId, isHost, lang, send }: Props
                   {view.eliminated.name} {zh ? "出局" : "is out"}
                 </h2>
                 <p>
-                  {zh
-                    ? `TA 是 ${view.eliminated.role === "spy" ? "卧底 🕵️" : "平民 🙂"}`
-                    : `They were ${view.eliminated.role === "spy" ? "an undercover 🕵️" : "a civilian 🙂"}`}
+                  {view.result
+                    ? zh
+                      ? "本局结束!"
+                      : "The game is over!"
+                    : zh
+                      ? "游戏继续!"
+                      : "The game continues!"}
                 </p>
                 <p className="muted">
-                  {zh ? "(词语等游戏结束才揭晓)" : "(words are revealed at the end)"}
+                  {zh ? "(身份和词等结束才揭晓)" : "(identities & words revealed at the end)"}
                 </p>
               </div>
             )}

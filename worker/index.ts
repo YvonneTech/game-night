@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover";
 type Lang = "en" | "zh";
+type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -59,6 +60,21 @@ type Message = {
 type YarnSlot = { id: string; name: string; team: 0 | 1; bot: boolean; color: string };
 type YarnState = { startsAt: number; durationSeconds: number; teams: YarnSlot[] };
 
+type UCMember = { id: string; role: UCRole; word: string; alive: boolean };
+type UndercoverState = {
+  sub: "describe" | "vote" | "reveal";
+  round: number;
+  spyCount: number;
+  members: UCMember[];
+  order: string[];
+  turnIndex: number;
+  descriptions: Array<{ playerId: string; playerName: string; text: string }>;
+  votes: Record<string, string>;
+  candidates: string[]; // non-empty during a tie runoff: only these are votable, and they can't vote
+  eliminated: { id: string; name: string; role: UCRole; word: string } | null;
+  result: UCRole | null;
+};
+
 type RoomState = {
   code: string;
   phase: Phase;
@@ -69,6 +85,7 @@ type RoomState = {
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
   yarn: YarnState | null;
+  undercover: UndercoverState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -87,7 +104,28 @@ type RelaySnapshot = {
   turnTimeLeft: number;
   turnSeconds: number;
 };
-type Snapshot = RoomState & {
+type UCMemberView = { id: string; name: string; alive: boolean; connected: boolean; voted: boolean };
+type UCView = {
+  sub: "describe" | "vote" | "reveal";
+  round: number;
+  spyCount: number;
+  myRole: UCRole | null;
+  myWord: string;
+  alive: boolean;
+  youSpeak: boolean;
+  youVote: boolean;
+  hasVoted: boolean;
+  currentId: string;
+  currentName: string;
+  candidates: string[];
+  members: UCMemberView[];
+  descriptions: Array<{ playerId: string; playerName: string; text: string }>;
+  eliminated: { name: string; role: UCRole; word: string } | null;
+  result: UCRole | null;
+  reveal: Array<{ name: string; role: UCRole; word: string }> | null;
+};
+type Snapshot = Omit<RoomState, "undercover"> & {
+  undercover: UCView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -185,6 +223,30 @@ const YARN_TEAM_COLORS: [string[], string[]] = [
   ["#8AC6FF", "#A0D8FF", "#7AB8FF"],
 ];
 const YARN_BOT_NAMES = ["Momo", "Mimi", "Berry", "Bubu", "Nori", "Pud", "Tofu", "Kiki"];
+
+// Undercover: pairs of similar words. One side is the civilians' word, the other the undercover's.
+const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
+  en: [
+    ["cat", "tiger"], ["coffee", "milk tea"], ["apple", "pear"], ["cola", "sprite"],
+    ["spider", "crab"], ["dumpling", "bun"], ["sofa", "bed"], ["air conditioner", "fan"],
+    ["basketball", "volleyball"], ["doctor", "nurse"], ["police officer", "security guard"],
+    ["tomato", "watermelon"], ["cinema", "theater"], ["candle", "light bulb"],
+    ["piano", "guitar"], ["bread", "cake"], ["mouse", "hamster"], ["glasses", "sunglasses"],
+    ["umbrella", "tent"], ["chocolate", "candy"], ["watch", "alarm clock"], ["plane", "rocket"],
+    ["subway", "bus"], ["giraffe", "zebra"], ["hotpot", "barbecue"], ["snowman", "ice sculpture"],
+    ["strawberry", "cherry"], ["lion", "leopard"], ["violin", "cello"], ["toothpaste", "face wash"],
+  ],
+  zh: [
+    ["猫", "老虎"], ["咖啡", "奶茶"], ["苹果", "梨"], ["可乐", "雪碧"],
+    ["蜘蛛", "螃蟹"], ["饺子", "包子"], ["沙发", "床"], ["空调", "风扇"],
+    ["篮球", "排球"], ["医生", "护士"], ["警察", "保安"],
+    ["西红柿", "西瓜"], ["电影院", "剧院"], ["蜡烛", "灯泡"],
+    ["钢琴", "吉他"], ["面包", "蛋糕"], ["老鼠", "仓鼠"], ["眼镜", "墨镜"],
+    ["雨伞", "帐篷"], ["巧克力", "糖果"], ["手表", "闹钟"], ["飞机", "火箭"],
+    ["地铁", "公交车"], ["长颈鹿", "斑马"], ["火锅", "烧烤"], ["雪人", "冰雕"],
+    ["草莓", "樱桃"], ["狮子", "豹子"], ["小提琴", "大提琴"], ["牙膏", "洗面奶"],
+  ],
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -319,6 +381,18 @@ export class GameRoom extends DurableObject<Env> {
         break;
       case "yarnWorld":
         this.relayYarnWorld(ws, command.payload);
+        break;
+      case "ucDescribe":
+        await this.ucDescribe(ws, command.payload);
+        break;
+      case "ucVote":
+        await this.ucVote(ws, command.payload);
+        break;
+      case "ucTally":
+        await this.ucTally(ws);
+        break;
+      case "ucProceed":
+        await this.ucProceed(ws);
         break;
       case "next":
         await this.next(ws);
@@ -491,7 +565,12 @@ export class GameRoom extends DurableObject<Env> {
     const state = this.load();
     if (!this.isHost(ws, state) || state.phase !== "lobby" || !isRecord(payload)) return;
 
-    if (payload.game === "classic" || payload.game === "passthepen" || payload.game === "yarnpals") {
+    if (
+      payload.game === "classic" ||
+      payload.game === "passthepen" ||
+      payload.game === "yarnpals" ||
+      payload.game === "undercover"
+    ) {
       state.game = payload.game;
     }
     if (payload.lang === "en" || payload.lang === "zh") {
@@ -510,14 +589,9 @@ export class GameRoom extends DurableObject<Env> {
   private async start(ws: WebSocket): Promise<void> {
     const state = this.load();
     if (!this.isHost(ws, state)) return;
-    const minPlayers = state.game === "passthepen" ? 3 : 2;
+    const minPlayers = state.game === "undercover" ? 4 : state.game === "passthepen" ? 3 : 2;
     if (state.players.length < minPlayers) {
-      this.error(
-        ws,
-        state.game === "passthepen"
-          ? "Pass the Pen needs at least three players."
-          : "Need at least two players.",
-      );
+      this.error(ws, `Need at least ${minPlayers} players.`);
       return;
     }
 
@@ -536,7 +610,216 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "undercover") {
+      this.startUndercover(state);
+      return;
+    }
+
     await this.beginRound(state, 1);
+  }
+
+  // ---------- Undercover (谁是卧底) ----------
+  private shuffleIds(ids: string[]): string[] {
+    const a = [...ids];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+      const tmp = a[i];
+      a[i] = a[j];
+      a[j] = tmp;
+    }
+    return a;
+  }
+
+  private startUndercover(state: RoomState): void {
+    const pairs = UNDERCOVER_PAIRS[state.lang];
+    const pair = pairs[crypto.getRandomValues(new Uint32Array(1))[0] % pairs.length];
+    // Randomize which side of the pair is the civilian word.
+    const flip = crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0;
+    const civWord = flip ? pair[0] : pair[1];
+    const spyWord = flip ? pair[1] : pair[0];
+
+    const spyCount = state.players.length >= 6 ? 2 : 1;
+    const shuffled = this.shuffleIds(state.players.map((p) => p.id));
+    const spies = new Set(shuffled.slice(0, spyCount));
+    const members: UCMember[] = state.players.map((p) => ({
+      id: p.id,
+      role: spies.has(p.id) ? "spy" : "civ",
+      word: spies.has(p.id) ? spyWord : civWord,
+      alive: true,
+    }));
+
+    state.undercover = {
+      sub: "describe",
+      round: 1,
+      spyCount,
+      members,
+      order: this.shuffleIds(state.players.map((p) => p.id)),
+      turnIndex: 0,
+      descriptions: [],
+      votes: {},
+      candidates: [],
+      eliminated: null,
+      result: null,
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `本局有 ${spyCount} 个卧底 — 轮流描述你的词!`
+        : `${spyCount} undercover${spyCount > 1 ? "s" : ""} this game — take turns describing your word!`,
+    );
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private ucAlive(state: RoomState): UCMember[] {
+    return state.undercover?.members.filter((m) => m.alive) ?? [];
+  }
+
+  private async ucDescribe(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const uc = state.undercover;
+    if (!session || state.game !== "undercover" || !uc || uc.sub !== "describe") return;
+    if (session.playerId !== uc.order[uc.turnIndex]) return;
+
+    const text = isRecord(payload) ? asText(payload.text, "", 120) : "";
+    if (text) {
+      const player = state.players.find((p) => p.id === session.playerId);
+      uc.descriptions.push({ playerId: session.playerId, playerName: player?.name ?? "Player", text });
+    }
+
+    // Advance to the next ALIVE speaker; if the lap is done, go to voting.
+    let next = uc.turnIndex + 1;
+    const aliveIds = new Set(this.ucAlive(state).map((m) => m.id));
+    while (next < uc.order.length && !aliveIds.has(uc.order[next])) next += 1;
+    if (next >= uc.order.length) {
+      uc.sub = "vote";
+      uc.votes = {};
+      uc.candidates = [];
+    } else {
+      uc.turnIndex = next;
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async ucVote(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const uc = state.undercover;
+    if (!session || !uc || uc.sub !== "vote" || !isRecord(payload)) return;
+
+    const voter = uc.members.find((m) => m.id === session.playerId);
+    if (!voter || !voter.alive) return;
+    // In a runoff, the tied candidates cannot vote.
+    if (uc.candidates.length && uc.candidates.includes(session.playerId)) return;
+
+    const target = asText(payload.targetId, "", 80);
+    const targetAlive = uc.members.some((m) => m.id === target && m.alive);
+    if (!targetAlive) return;
+    if (uc.candidates.length && !uc.candidates.includes(target)) return;
+
+    uc.votes[session.playerId] = target;
+
+    // Auto-tally once every eligible voter has voted.
+    const eligible = this.ucEligibleVoters(state);
+    if (eligible.every((id) => uc.votes[id])) {
+      this.ucResolveVotes(state);
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private ucEligibleVoters(state: RoomState): string[] {
+    const uc = state.undercover;
+    if (!uc) return [];
+    return this.ucAlive(state)
+      .map((m) => m.id)
+      .filter((id) => !(uc.candidates.length && uc.candidates.includes(id)));
+  }
+
+  private async ucTally(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const uc = state.undercover;
+    if (!this.isHost(ws, state) || !uc || uc.sub !== "vote") return;
+    this.ucResolveVotes(state);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private ucResolveVotes(state: RoomState): void {
+    const uc = state.undercover;
+    if (!uc) return;
+    const tally: Record<string, number> = {};
+    for (const target of Object.values(uc.votes)) tally[target] = (tally[target] ?? 0) + 1;
+    let max = 0;
+    for (const n of Object.values(tally)) max = Math.max(max, n);
+    const top = Object.keys(tally).filter((id) => tally[id] === max);
+
+    if (max === 0) {
+      // Nobody voted — pick randomly among alive as a fallback.
+      const alive = this.ucAlive(state).map((m) => m.id);
+      top.push(alive[crypto.getRandomValues(new Uint32Array(1))[0] % alive.length]);
+    }
+
+    if (top.length > 1) {
+      // Tie: run a runoff among the tied players (they lose their vote), unless this was already a runoff.
+      if (uc.candidates.length === 0) {
+        uc.candidates = top;
+        uc.votes = {};
+        this.system(
+          state,
+          state.lang === "zh" ? "平票!在平票者之间重新投票。" : "Tie! Re-vote among the tied players.",
+        );
+        return;
+      }
+      // Runoff also tied — eliminate one at random to settle it.
+    }
+
+    const outId = top.length === 1 ? top[0] : top[crypto.getRandomValues(new Uint32Array(1))[0] % top.length];
+    const member = uc.members.find((m) => m.id === outId);
+    if (!member) return;
+    member.alive = false;
+    const player = state.players.find((p) => p.id === outId);
+    uc.eliminated = { id: outId, name: player?.name ?? "Player", role: member.role, word: member.word };
+    uc.candidates = [];
+    uc.sub = "reveal";
+
+    // Win check.
+    const aliveMembers = this.ucAlive(state);
+    const spies = aliveMembers.filter((m) => m.role === "spy").length;
+    const civs = aliveMembers.length - spies;
+    if (spies === 0) uc.result = "civ";
+    else if (spies >= civs) uc.result = "spy";
+    else uc.result = null;
+  }
+
+  private async ucProceed(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const uc = state.undercover;
+    if (!this.isHost(ws, state) || !uc || uc.sub !== "reveal") return;
+
+    if (uc.result) {
+      state.phase = "gameEnd";
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+
+    // Next round of descriptions among survivors.
+    uc.round += 1;
+    uc.sub = "describe";
+    uc.order = this.shuffleIds(this.ucAlive(state).map((m) => m.id));
+    uc.turnIndex = 0;
+    uc.descriptions = [];
+    uc.votes = {};
+    uc.candidates = [];
+    uc.eliminated = null;
+    this.system(state, state.lang === "zh" ? `第 ${uc.round} 轮描述开始` : `Round ${uc.round}: describe again`);
+    this.save(state);
+    this.broadcast(state);
   }
 
   private async startYarn(state: RoomState): Promise<void> {
@@ -818,6 +1101,7 @@ export class GameRoom extends DurableObject<Env> {
     state.phase = "lobby";
     state.round = null;
     state.yarn = null;
+    state.undercover = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -896,6 +1180,49 @@ export class GameRoom extends DurableObject<Env> {
         this.broadcast(state);
         return;
       }
+    }
+
+    // Undercover: drop the leaver and keep the round flowing / end if a side is settled.
+    if (state.game === "undercover" && state.undercover && state.phase === "playing") {
+      const uc = state.undercover;
+      const member = uc.members.find((m) => m.id === playerId);
+      if (member) member.alive = false;
+      uc.candidates = uc.candidates.filter((id) => id !== playerId);
+      delete uc.votes[playerId];
+
+      const aliveMembers = this.ucAlive(state);
+      const spies = aliveMembers.filter((m) => m.role === "spy").length;
+      const civs = aliveMembers.length - spies;
+      if (aliveMembers.length <= 1 || spies === 0 || spies >= civs) {
+        uc.result = spies === 0 ? "civ" : "spy";
+        uc.sub = "reveal";
+        state.phase = "gameEnd";
+        this.save(state);
+        this.broadcast(state);
+        return;
+      }
+      if (uc.sub === "describe") {
+        const aliveIds = new Set(aliveMembers.map((m) => m.id));
+        if (!aliveIds.has(uc.order[uc.turnIndex])) {
+          let next = uc.turnIndex;
+          while (next < uc.order.length && !aliveIds.has(uc.order[next])) next += 1;
+          if (next >= uc.order.length) {
+            uc.sub = "vote";
+            uc.votes = {};
+            uc.candidates = [];
+          } else {
+            uc.turnIndex = next;
+          }
+        }
+      } else if (uc.sub === "vote") {
+        const eligible = this.ucEligibleVoters(state);
+        if (eligible.length > 0 && eligible.every((id) => uc.votes[id])) {
+          this.ucResolveVotes(state);
+        }
+      }
+      this.save(state);
+      this.broadcast(state);
+      return;
     }
 
     if (wasPerformer && state.phase === "playing") {
@@ -1151,6 +1478,7 @@ export class GameRoom extends DurableObject<Env> {
     return {
       ...state,
       round,
+      undercover: this.ucView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -1159,6 +1487,58 @@ export class GameRoom extends DurableObject<Env> {
       youDraw,
       youGuess,
       relay,
+    };
+  }
+
+  private ucView(state: RoomState, playerId?: string): UCView | null {
+    const uc = state.undercover;
+    if (state.game !== "undercover" || !uc) return null;
+    const gameOver = state.phase === "gameEnd";
+    const me = uc.members.find((m) => m.id === playerId);
+    const eligible = new Set(this.ucEligibleVoters(state));
+    const members: UCMemberView[] = uc.members.map((m) => {
+      const p = state.players.find((pp) => pp.id === m.id);
+      return {
+        id: m.id,
+        name: p?.name ?? "Player",
+        alive: m.alive,
+        connected: p?.connected ?? false,
+        voted: uc.votes[m.id] !== undefined,
+      };
+    });
+    const currentId = uc.sub === "describe" ? uc.order[uc.turnIndex] ?? "" : "";
+    return {
+      sub: uc.sub,
+      round: uc.round,
+      spyCount: uc.spyCount,
+      myRole: me ? me.role : null,
+      myWord: me ? me.word : "",
+      alive: me ? me.alive : false,
+      youSpeak: uc.sub === "describe" && currentId === playerId,
+      youVote:
+        uc.sub === "vote" &&
+        !!me &&
+        me.alive &&
+        !!playerId &&
+        eligible.has(playerId) &&
+        uc.votes[playerId] === undefined,
+      hasVoted: !!playerId && uc.votes[playerId] !== undefined,
+      currentId,
+      currentName: state.players.find((p) => p.id === currentId)?.name ?? "",
+      candidates: uc.candidates,
+      members,
+      descriptions: uc.descriptions,
+      eliminated: uc.eliminated
+        ? { name: uc.eliminated.name, role: uc.eliminated.role, word: uc.eliminated.word }
+        : null,
+      result: uc.result,
+      reveal: gameOver
+        ? uc.members.map((m) => ({
+            name: state.players.find((p) => p.id === m.id)?.name ?? "Player",
+            role: m.role,
+            word: m.word,
+          }))
+        : null,
     };
   }
 
@@ -1204,6 +1584,7 @@ export class GameRoom extends DurableObject<Env> {
       rounds: 5,
       round: null,
       yarn: null,
+      undercover: null,
       solved: 0,
       messages: [],
       strokes: [],

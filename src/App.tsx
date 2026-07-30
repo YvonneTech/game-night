@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YarnPalsGame, { YarnSlot } from "./YarnPalsGame";
+import UndercoverGame, { UCView } from "./UndercoverGame";
 
-type Game = "classic" | "passthepen" | "yarnpals";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "landing" | "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -75,6 +76,7 @@ type Snapshot = {
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
   yarn: YarnState | null;
+  undercover: UCView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -106,8 +108,8 @@ const COLORS = ["#4f7cff", "#e0576f", "#18a67d", "#f4c542", "#8b6be8", "#ef7d33"
 const ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
-  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup" },
-  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯" },
+  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup", undercover: "Undercover" },
+  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯", undercover: "谁是卧底" },
 };
 
 const MODE_LABELS: Record<"en" | "zh", Record<GameMode, string>> = {
@@ -129,6 +131,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
       blurb: "Chaotic 3v3 cat soccer — random teams, everyone drives a cat, knock the yarn ball into the other goal.",
       scoring: "Most goals in 2 minutes wins.",
     },
+    undercover: {
+      blurb:
+        "Everyone gets a secret word — the undercover(s) get a similar but different one. Each round describe your word, then vote out who you think is the spy. Needs 4+ players.",
+      scoring: "Civilians win by voting out every undercover; the undercover wins by surviving to the end.",
+    },
   },
   zh: {
     classic: {
@@ -142,6 +149,10 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     yarnpals: {
       blurb: "混乱的 3v3 猫咪足球——随机分队,每人操控一只猫,把毛线球顶进对方球门。",
       scoring: "2 分钟内进球多者获胜。",
+    },
+    undercover: {
+      blurb: "每人拿到一个秘密词,卧底拿到的是相近但不同的词。每轮描述自己的词,再投票选出你认为的卧底。需 4 人以上。",
+      scoring: "把所有卧底都投出局=平民赢;卧底撑到最后=卧底赢。",
     },
   },
 };
@@ -232,7 +243,7 @@ export default function App() {
   const round = snapshot?.round ?? null;
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
-  const minPlayers = game === "passthepen" ? 3 : 2;
+  const minPlayers = game === "undercover" ? 4 : game === "passthepen" ? 3 : 2;
   const hasJoinCode = joinCode.trim().length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
@@ -614,7 +625,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals"] as const).map((option) => (
+              {(["classic", "passthepen", "yarnpals", "undercover"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}
@@ -648,7 +659,7 @@ export default function App() {
                 ))}
               </SettingGroup>
             )}
-            {game !== "yarnpals" && (
+            {game !== "yarnpals" && game !== "undercover" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -723,6 +734,10 @@ export default function App() {
             onQuit={() => send("reset")}
           />
         </main>
+      )}
+
+      {phase === "playing" && snapshot?.undercover && game === "undercover" && (
+        <UndercoverGame view={snapshot.undercover} myId={id} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (
@@ -1018,7 +1033,46 @@ export default function App() {
         </main>
       )}
 
-      {phase === "gameEnd" && snapshot && game !== "passthepen" && (
+      {phase === "gameEnd" && snapshot && game === "undercover" && (
+        <main className="center">
+          <section className="result-panel wide">
+            <p className="eyebrow">{snapshot.lang === "zh" ? "游戏结束" : "Game over"}</p>
+            <h1>
+              {snapshot.undercover?.result === "civ"
+                ? snapshot.lang === "zh"
+                  ? "平民获胜! 🙂"
+                  : "Civilians win! 🙂"
+                : snapshot.lang === "zh"
+                  ? "卧底获胜! 🕵️"
+                  : "Undercover wins! 🕵️"}
+            </h1>
+            <div className="uc-reveal-list">
+              {snapshot.undercover?.reveal?.map((r, i) => (
+                <div key={i} className={`uc-reveal-row ${r.role === "spy" ? "spy" : ""}`}>
+                  <strong>{r.name}</strong>
+                  <span>
+                    {r.role === "spy"
+                      ? snapshot.lang === "zh"
+                        ? "卧底"
+                        : "Undercover"
+                      : snapshot.lang === "zh"
+                        ? "平民"
+                        : "Civilian"}
+                  </span>
+                  <em>{r.word}</em>
+                </div>
+              ))}
+            </div>
+            {host && (
+              <button className="primary" onClick={() => send("reset")}>
+                {snapshot.lang === "zh" ? "再来一局" : "Play again"}
+              </button>
+            )}
+          </section>
+        </main>
+      )}
+
+      {phase === "gameEnd" && snapshot && game !== "passthepen" && game !== "undercover" && (
         <main className="center">
           <section className="result-panel wide">
             <p className="eyebrow">Winner</p>

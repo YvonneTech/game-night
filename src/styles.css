@@ -330,25 +330,27 @@ canvas {
   height: 486px;
   display: grid;
   place-items: center;
-  gap: 2px;
   padding: 24px;
   background: #f7fbff;
   text-align: center;
 }
-.charades-icon { font-size: 76px; line-height: 1; margin-bottom: -6px; }
-.charades-hint { font-size: 18px; font-weight: 850; color: var(--ink); }
 .charades-card {
   max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   border: 3px solid var(--strong);
   border-radius: 8px;
-  padding: 18px 22px;
+  padding: 22px 26px;
   background: var(--yellow);
   box-shadow: 4px 4px 0 var(--strong);
-  font-size: 28px;
-  font-weight: 900;
   overflow-wrap: anywhere;
   text-align: center;
 }
+.charades-emoji { font-size: 72px; line-height: 1; }
+.charades-hint { font-size: 16px; font-weight: 850; color: var(--ink); }
+.charades-word { font-size: 28px; font-weight: 900; line-height: 1.25; }
 .chat { display: flex; flex-direction: column; max-height: 654px; }
 .chat-list {
   min-height: 356px;

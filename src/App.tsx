@@ -833,19 +833,19 @@ export default function App() {
             ) : (
               <div className="charades-stage">
                 {snapshot.isPerformer ? (
-                  <>
-                    <div className="charades-hint">{snapshot.lang === "zh" ? "表演这个:" : "Act this out:"}</div>
-                    <div className="charades-card">{round.word}</div>
-                  </>
+                  <div className="charades-card">
+                    <span className="charades-hint">{snapshot.lang === "zh" ? "表演这个" : "Act this out"}</span>
+                    <span className="charades-word">{round.word}</span>
+                  </div>
                 ) : (
-                  <>
-                    <div className="charades-icon">🎭</div>
-                    <div className="charades-card">
+                  <div className="charades-card">
+                    <span className="charades-emoji">🎭</span>
+                    <span className="charades-word">
                       {snapshot.lang === "zh"
                         ? `猜猜 ${displayName(performer)} 在演什么?`
                         : `Guess what ${displayName(performer)} is acting!`}
-                    </div>
-                  </>
+                    </span>
+                  </div>
                 )}
               </div>
             )}

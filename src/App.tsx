@@ -802,7 +802,13 @@ export default function App() {
                     </>
                   ) : (
                     <span className="prompt-hintwait">
-                      {snapshot.lang === "zh" ? "👀 看画面猜!" : "👀 Guess from the drawing!"}
+                      {round.mode === "pictionary"
+                        ? snapshot.lang === "zh"
+                          ? "👀 看画面猜!"
+                          : "👀 Guess from the drawing!"
+                        : snapshot.lang === "zh"
+                          ? "👀 看 TA 表演,猜猜看!"
+                          : "👀 Watch them act and guess!"}
                     </span>
                   )}
                   <input
@@ -826,7 +832,21 @@ export default function App() {
               />
             ) : (
               <div className="charades-stage">
-                <div className="charades-card">{snapshot.isPerformer ? round.word : displayName(performer)}</div>
+                {snapshot.isPerformer ? (
+                  <>
+                    <div className="charades-hint">{snapshot.lang === "zh" ? "表演这个:" : "Act this out:"}</div>
+                    <div className="charades-card">{round.word}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="charades-icon">🎭</div>
+                    <div className="charades-card">
+                      {snapshot.lang === "zh"
+                        ? `猜猜 ${displayName(performer)} 在演什么?`
+                        : `Guess what ${displayName(performer)} is acting!`}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </section>

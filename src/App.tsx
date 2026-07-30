@@ -69,6 +69,7 @@ type Snapshot = {
   phase: Exclude<Phase, "landing">;
   players: Player[];
   game: Game;
+  lang: "en" | "zh";
   mode: GameMode;
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
@@ -178,6 +179,7 @@ export default function App() {
   const [id] = useState(playerId);
   const [name, setName] = useState(() => localStorage.getItem("fresh_game_name") ?? "");
   const [color, setColor] = useState(() => localStorage.getItem("fresh_game_color") ?? COLORS[0]);
+  const [lang, setLang] = useState<"en" | "zh">(() => (localStorage.getItem("fresh_game_lang") === "zh" ? "zh" : "en"));
   const [joinCode, setJoinCode] = useState(() => {
     try {
       return (new URLSearchParams(window.location.search).get("room") ?? "").toUpperCase().slice(0, 8);
@@ -232,9 +234,15 @@ export default function App() {
   }, [showNotice]);
 
   const changeSettings = useCallback(
-    (patch: Partial<{ game: Game; mode: GameMode; rounds: 1 | 5 | 10 | 15 }>) => {
+    (patch: Partial<{ game: Game; lang: "en" | "zh"; mode: GameMode; rounds: 1 | 5 | 10 | 15 }>) => {
       if (!snapshot) return;
-      send("settings", { game: snapshot.game, mode: snapshot.mode, rounds: snapshot.rounds, ...patch });
+      send("settings", {
+        game: snapshot.game,
+        lang: snapshot.lang,
+        mode: snapshot.mode,
+        rounds: snapshot.rounds,
+        ...patch,
+      });
     },
     [send, snapshot],
   );
@@ -254,6 +262,7 @@ export default function App() {
 
       localStorage.setItem("fresh_game_name", cleanName);
       localStorage.setItem("fresh_game_color", color);
+      localStorage.setItem("fresh_game_lang", lang);
       closingRef.current = true;
       wsRef.current?.close();
       closingRef.current = false;
@@ -271,7 +280,7 @@ export default function App() {
         socket.send(
           JSON.stringify({
             type: "join",
-            payload: { create, player: { id, name: cleanName, color } },
+            payload: { create, lang, player: { id, name: cleanName, color } },
           }),
         );
       });
@@ -321,7 +330,7 @@ export default function App() {
         showNotice("Could not connect to the room server");
       });
     },
-    [clearNotice, color, id, name, showNotice],
+    [clearNotice, color, id, lang, name, showNotice],
   );
 
   useEffect(() => {
@@ -492,6 +501,18 @@ export default function App() {
               </div>
             </div>
 
+            <div className="field">
+              <span className="field-label">Game language</span>
+              <div className="chips">
+                <button className={lang === "en" ? "chip active" : "chip"} onClick={() => setLang("en")}>
+                  English
+                </button>
+                <button className={lang === "zh" ? "chip active" : "chip"} onClick={() => setLang("zh")}>
+                  中文
+                </button>
+              </div>
+            </div>
+
             <div className="you-preview">
               <span className="you-dot" style={{ background: color }}>{initial(name)}</span>
               <span>{name.trim() || "That's you"}</span>
@@ -579,6 +600,21 @@ export default function App() {
                 </button>
               ))}
             </SettingGroup>
+            {game !== "yarnpals" && (
+              <SettingGroup title="Language">
+                {(["en", "zh"] as const).map((option) => (
+                  <button
+                    key={option}
+                    className={snapshot.lang === option ? "chip active" : "chip"}
+                    disabled={!host}
+                    title={!host ? hostOnlySettings : undefined}
+                    onClick={() => changeSettings({ lang: option })}
+                  >
+                    {option === "en" ? "English" : "中文"}
+                  </button>
+                ))}
+              </SettingGroup>
+            )}
             <div className="game-info">
               <p>{GAME_INFO[snapshot.game].blurb}</p>
               <p className="game-info-scoring">
@@ -741,7 +777,9 @@ export default function App() {
                   }}
                 >
                   <code className="prompt-hint">{snapshot.hiddenWord}</code>
-                  <span className="prompt-letters">{snapshot.wordLength} letters</span>
+                  <span className="prompt-letters">
+                    {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
+                  </span>
                   <input
                     className="prompt-guess-input"
                     value={guess}
@@ -834,7 +872,7 @@ export default function App() {
                     value={guess}
                     disabled={!canGuess}
                     onChange={(event) => setGuess(event.target.value)}
-                    placeholder={`Type your guess · ${snapshot.wordLength} letters`}
+                    placeholder={`Type your guess · ${snapshot.wordLength} ${snapshot.lang === "zh" ? "字" : "letters"}`}
                   />
                   <button type="submit" className="primary small" disabled={!canGuess}>
                     Send

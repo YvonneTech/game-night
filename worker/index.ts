@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 type Game = "classic" | "passthepen" | "yarnpals";
+type Lang = "en" | "zh";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -62,6 +63,7 @@ type RoomState = {
   phase: Phase;
   players: Player[];
   game: Game;
+  lang: Lang;
   mode: GameMode;
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
@@ -103,83 +105,85 @@ const MAX_MESSAGES = 100;
 const SCORE_BY_RANK = [100, 80, 60, 40, 20];
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // recycle a room 10 min after everyone leaves
 
-const PICTIONARY_WORDS = [
-  "rocket",
-  "lighthouse",
-  "roller coaster",
-  "birthday cake",
-  "submarine",
-  "rainstorm",
-  "treasure map",
-  "skateboard",
-  "campfire",
-  "greenhouse",
-  "snow globe",
-  "telescope",
-  "waterfall",
-  "dragon",
-  "spaceship",
-  "windmill",
-  "jellyfish",
-  "treehouse",
-  "volcano",
-  "suitcase",
-  "sandcastle",
-  "robot",
-  "carousel",
-  "hot air balloon",
-];
+type WordBank = { en: string[]; zh: string[] };
 
-const CHARADES_WORDS = [
-  "opening a stuck jar",
-  "walking through a spiderweb",
-  "landing on the moon",
-  "ice skating",
-  "finding a hidden key",
-  "making pizza dough",
-  "riding a horse",
-  "taking a selfie",
-  "escaping quicksand",
-  "directing traffic",
-  "playing air guitar",
-  "washing a window",
-  "climbing a mountain",
-  "sneaking past a guard",
-  "doing a magic trick",
-  "juggling fruit",
-  "building a tent",
-  "surfing a wave",
-  "catching a butterfly",
-  "fixing a robot",
-];
+const PICTIONARY_WORDS: WordBank = {
+  en: [
+    "rocket", "lighthouse", "roller coaster", "birthday cake", "submarine", "rainstorm",
+    "treasure map", "skateboard", "campfire", "greenhouse", "snow globe", "telescope",
+    "waterfall", "dragon", "spaceship", "windmill", "jellyfish", "treehouse", "volcano",
+    "suitcase", "sandcastle", "robot", "carousel", "hot air balloon", "cat", "dog", "sun",
+    "moon", "house", "tree", "apple", "guitar", "clock", "umbrella", "penguin", "cactus",
+    "igloo", "ghost", "castle", "butterfly", "snail", "elephant", "panda", "dinosaur",
+    "rainbow", "beach", "mountain", "key", "cupcake", "anchor", "mermaid", "unicorn",
+    "tornado", "scarecrow", "fire truck", "hamburger", "ice cream", "kite", "ladder",
+    "mailbox", "owl", "piano", "pumpkin", "shark", "snowflake", "spider web",
+    "traffic light", "trophy", "wizard hat", "yacht", "bicycle", "camera", "cactus pot",
+  ],
+  zh: [
+    "火箭", "灯塔", "过山车", "生日蛋糕", "潜水艇", "暴风雨", "藏宝图", "滑板", "篝火", "温室",
+    "雪花玻璃球", "望远镜", "瀑布", "龙", "飞船", "风车", "水母", "树屋", "火山", "行李箱",
+    "沙堡", "机器人", "旋转木马", "热气球", "猫", "狗", "太阳", "月亮", "房子", "树",
+    "苹果", "吉他", "时钟", "雨伞", "企鹅", "仙人掌", "冰屋", "幽灵", "城堡", "蝴蝶",
+    "蜗牛", "大象", "熊猫", "恐龙", "彩虹", "沙滩", "高山", "钥匙", "纸杯蛋糕", "船锚",
+    "美人鱼", "独角兽", "龙卷风", "稻草人", "消防车", "汉堡", "冰淇淋", "风筝", "梯子", "邮箱",
+    "猫头鹰", "钢琴", "南瓜", "鲨鱼", "雪花", "蜘蛛网", "红绿灯", "奖杯", "巫师帽", "游艇",
+    "自行车", "照相机", "长城",
+  ],
+};
+
+const CHARADES_WORDS: WordBank = {
+  en: [
+    "opening a stuck jar", "walking through a spiderweb", "landing on the moon", "ice skating",
+    "finding a hidden key", "making pizza dough", "riding a horse", "taking a selfie",
+    "escaping quicksand", "directing traffic", "playing air guitar", "washing a window",
+    "climbing a mountain", "sneaking past a guard", "doing a magic trick", "juggling fruit",
+    "building a tent", "surfing a wave", "catching a butterfly", "fixing a robot",
+    "brushing teeth", "walking a dog", "doing yoga", "blowing out candles", "tying shoelaces",
+    "flying a kite", "fishing", "sneezing", "playing basketball", "baking cookies",
+    "chopping wood", "milking a cow", "conducting an orchestra", "scuba diving", "jumping rope",
+    "bowling", "playing tennis", "flipping a pancake", "painting a wall", "rowing a boat",
+    "shooting an arrow", "putting on makeup", "dancing ballet", "climbing a ladder", "boxing",
+  ],
+  zh: [
+    "打开卡住的罐子", "穿过蜘蛛网", "登上月球", "滑冰", "找到隐藏的钥匙", "揉披萨面团",
+    "骑马", "自拍", "从流沙里逃脱", "指挥交通", "弹空气吉他", "擦窗户", "爬山", "溜过警卫",
+    "变魔术", "杂耍水果", "搭帐篷", "冲浪", "抓蝴蝶", "修理机器人", "刷牙", "遛狗", "做瑜伽",
+    "吹蜡烛", "系鞋带", "放风筝", "钓鱼", "打喷嚏", "打篮球", "烤饼干", "劈柴", "挤牛奶",
+    "指挥乐队", "深海潜水", "跳绳", "打保龄球", "打网球", "翻煎饼", "刷墙", "划船", "射箭",
+    "化妆", "跳芭蕾", "爬梯子", "打拳击",
+  ],
+};
 
 // Short, drawable scenes for the relay drawing game.
-const PASS_THE_PEN_PHRASES = [
-  "a cat riding a skateboard",
-  "sunset over the mountains",
-  "a robot eating pizza",
-  "an astronaut walking a dog",
-  "a haunted house on a hill",
-  "a dragon breathing fire",
-  "a penguin on a surfboard",
-  "a wizard casting a spell",
-  "a shark in a swimming pool",
-  "a unicorn under a rainbow",
-  "a pirate ship in a storm",
-  "a snowman on the beach",
-  "an octopus playing drums",
-  "a hot air balloon race",
-  "a dinosaur birthday party",
-  "a ghost driving a car",
-  "a frog wearing a crown",
-  "a rocket landing on the moon",
-  "a bear catching a fish",
-  "an alien playing guitar",
-  "a mermaid in a teacup",
-  "a monkey stealing bananas",
-  "an owl reading a book",
-  "a whale wearing sunglasses",
-];
+const PASS_THE_PEN_PHRASES: WordBank = {
+  en: [
+    "a cat riding a skateboard", "sunset over the mountains", "a robot eating pizza",
+    "an astronaut walking a dog", "a haunted house on a hill", "a dragon breathing fire",
+    "a penguin on a surfboard", "a wizard casting a spell", "a shark in a swimming pool",
+    "a unicorn under a rainbow", "a pirate ship in a storm", "a snowman on the beach",
+    "an octopus playing drums", "a hot air balloon race", "a dinosaur birthday party",
+    "a ghost driving a car", "a frog wearing a crown", "a rocket landing on the moon",
+    "a bear catching a fish", "an alien playing guitar", "a mermaid in a teacup",
+    "a monkey stealing bananas", "an owl reading a book", "a whale wearing sunglasses",
+    "a cat astronaut in space", "a dog surfing a wave", "a giraffe on a bicycle",
+    "a snowman melting in summer", "a fairy painting a rainbow", "a knight fighting a snail",
+    "a panda eating ice cream", "a cactus wearing a hat", "a turtle winning a race",
+    "a ninja in a library", "a vampire at the beach", "a duck driving a bus",
+    "a robot walking a dinosaur", "a chef juggling tomatoes", "a kangaroo boxing a robot",
+    "a lion getting a haircut",
+  ],
+  zh: [
+    "一只猫在滑滑板", "山顶的日落", "机器人在吃披萨", "宇航员在遛狗", "山上的鬼屋",
+    "喷火的龙", "冲浪的企鹅", "施法的巫师", "泳池里的鲨鱼", "彩虹下的独角兽",
+    "暴风雨中的海盗船", "沙滩上的雪人", "打鼓的章鱼", "热气球比赛", "恐龙的生日派对",
+    "开车的幽灵", "戴皇冠的青蛙", "登月的火箭", "抓鱼的熊", "弹吉他的外星人",
+    "茶杯里的美人鱼", "偷香蕉的猴子", "看书的猫头鹰", "戴墨镜的鲸鱼", "太空里的猫宇航员",
+    "冲浪的狗", "骑自行车的长颈鹿", "夏天融化的雪人", "画彩虹的仙女", "和蜗牛决斗的骑士",
+    "吃冰淇淋的熊猫", "戴帽子的仙人掌", "跑赢比赛的乌龟", "图书馆里的忍者", "沙滩上的吸血鬼",
+    "开公交车的鸭子", "遛恐龙的机器人", "杂耍番茄的厨师", "和机器人拳击的袋鼠", "理发的狮子",
+  ],
+};
 
 const YARN_DURATION_SECONDS = 120;
 const YARN_COUNTDOWN_MS = 3000;
@@ -205,13 +209,12 @@ function asColor(value: unknown): string {
 }
 
 function normalizeGuess(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  // Keep letters (incl. CJK) and digits; drop whitespace and punctuation. Works for EN + 中文.
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function guessesMatch(guess: string, answer: string): boolean {
-  const a = normalizeGuess(guess);
-  const b = normalizeGuess(answer);
-  return a === b || a.replaceAll(" ", "") === b.replaceAll(" ", "");
+  return normalizeGuess(guess) === normalizeGuess(answer);
 }
 
 function pointsForRank(rank: number): number {
@@ -471,6 +474,10 @@ export class GameRoom extends DurableObject<Env> {
         return;
       }
       if (state.createdAt === 0) state.createdAt = Date.now();
+      // The creator (first player) picks the room's language.
+      if (state.players.length === 0 && (payload.lang === "en" || payload.lang === "zh")) {
+        state.lang = payload.lang;
+      }
       state.players.push({
         id: playerId,
         name,
@@ -501,6 +508,9 @@ export class GameRoom extends DurableObject<Env> {
 
     if (payload.game === "classic" || payload.game === "passthepen" || payload.game === "yarnpals") {
       state.game = payload.game;
+    }
+    if (payload.lang === "en" || payload.lang === "zh") {
+      state.lang = payload.lang;
     }
     if (payload.mode === "pictionary" || payload.mode === "charades" || payload.mode === "mixed") {
       state.mode = payload.mode;
@@ -964,7 +974,7 @@ export class GameRoom extends DurableObject<Env> {
       mode,
       performerId: performer.id,
       word: "",
-      options: this.wordOptions(mode),
+      options: this.wordOptions(mode, state.lang),
       startedAt: 0,
       durationSeconds: ROUND_SECONDS,
       hints: 0,
@@ -983,7 +993,7 @@ export class GameRoom extends DurableObject<Env> {
       total: state.rounds,
       mode: "pictionary",
       performerId: guesser.id,
-      word: this.pickPhrase(),
+      word: this.pickPhrase(state.lang),
       options: undefined,
       startedAt: now,
       durationSeconds: drawOrder.length * turnSeconds + FINAL_GUESS_SECONDS,
@@ -999,8 +1009,8 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  private wordOptions(mode: RoundMode): string[] {
-    const pool = mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS;
+  private wordOptions(mode: RoundMode, lang: Lang): string[] {
+    const pool = (mode === "pictionary" ? PICTIONARY_WORDS : CHARADES_WORDS)[lang];
     const picks: string[] = [];
     const used = new Set<number>();
     while (picks.length < 3 && used.size < pool.length) {
@@ -1012,9 +1022,10 @@ export class GameRoom extends DurableObject<Env> {
     return picks;
   }
 
-  private pickPhrase(): string {
-    const offset = crypto.getRandomValues(new Uint8Array(1))[0];
-    return PASS_THE_PEN_PHRASES[offset % PASS_THE_PEN_PHRASES.length];
+  private pickPhrase(lang: Lang): string {
+    const pool = PASS_THE_PEN_PHRASES[lang];
+    const offset = crypto.getRandomValues(new Uint32Array(1))[0];
+    return pool[offset % pool.length];
   }
 
   private async schedule(state: RoomState): Promise<void> {
@@ -1197,6 +1208,7 @@ export class GameRoom extends DurableObject<Env> {
       phase: "lobby",
       players: [],
       game: "classic",
+      lang: "en",
       mode: "mixed",
       rounds: 5,
       round: null,

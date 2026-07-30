@@ -1,6 +1,6 @@
 # Game Night
 
-Party games for 2-6 friends — a collection of quick multiplayer mini-games, playable across devices via a shared room code.
+Party games for 2-6 friends — **five** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
 
 ## 🎮 Play it live
 
@@ -17,6 +17,12 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **Wavelength (心有灵犀)** — one player gives a clue for a hidden spot on a spectrum (cold ↔ hot); everyone else slides to guess it. 3+ players.
 
 English or 中文 word banks, chosen when you create a room.
+
+## Tech
+
+- **Cloudflare Workers + Durable Objects** — one Durable Object per room holds authoritative game state and fans out updates over WebSockets; empty rooms auto-recycle.
+- **React + Vite + TypeScript** single-page client, served as static assets by the Worker.
+- Real-time sync, per-viewer hidden info (secret words/roles), reconnect, and invite links — no accounts, no database to run.
 
 ## Run
 

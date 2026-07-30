@@ -789,15 +789,22 @@ export default function App() {
                     submitGuess();
                   }}
                 >
-                  {round.category && (
-                    <span className="prompt-cat">
-                      {snapshot.lang === "zh" ? "类别" : "Category"}: {round.category}
+                  {snapshot.wordLength > 0 ? (
+                    <>
+                      <span className="prompt-letters">
+                        {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
+                      </span>
+                      {round.category && (
+                        <span className="prompt-cat">
+                          {snapshot.lang === "zh" ? "类别" : "Category"}: {round.category}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="prompt-hintwait">
+                      {snapshot.lang === "zh" ? "👀 看画面猜!" : "👀 Guess from the drawing!"}
                     </span>
                   )}
-                  <code className="prompt-hint">{snapshot.hiddenWord}</code>
-                  <span className="prompt-letters">
-                    {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
-                  </span>
                   <input
                     className="prompt-guess-input"
                     value={guess}

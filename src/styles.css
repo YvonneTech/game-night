@@ -643,6 +643,7 @@ canvas {
   white-space: nowrap;
 }
 .prompt-hint { font-weight: 800; letter-spacing: 0.12em; white-space: nowrap; }
+.prompt-hintwait { font-weight: 800; color: var(--muted); white-space: nowrap; }
 .prompt-letters { font-size: 12px; font-weight: 800; color: var(--muted); white-space: nowrap; }
 .prompt-label { font-size: 12px; font-weight: 850; text-transform: uppercase; color: var(--muted); }
 .pass-btn { white-space: nowrap; }

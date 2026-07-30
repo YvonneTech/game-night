@@ -99,7 +99,8 @@ type Snapshot = RoomState & {
 };
 
 const ROUND_SECONDS = 60;
-const HINT_INTERVAL_SECONDS = 15;
+const HINT_COUNT_AT_SECONDS = 20; // reveal the word length after this long
+const HINT_CATEGORY_AT_SECONDS = 40; // reveal the category after this long
 const TURN_SECONDS = 12;
 const FINAL_GUESS_SECONDS = 30;
 const MAX_PLAYERS = 6;
@@ -411,19 +412,12 @@ export class GameRoom extends DurableObject<Env> {
 
     if (!state.round?.word) return;
 
-    const timeLeft = this.timeLeft(state);
-    const elapsed = Math.floor((Date.now() - state.round.startedAt) / 1000);
-    const hints = Math.min(
-      Math.floor(elapsed / HINT_INTERVAL_SECONDS),
-      state.round.word.replaceAll(" ", "").length,
-    );
-
-    if (hints > state.round.hints) state.round.hints = hints;
-    if (timeLeft <= 0) {
+    if (this.timeLeft(state) <= 0) {
       await this.endRound(state);
       return;
     }
 
+    // Re-broadcast so staged hints (length @20s, category @40s) reach the guessers.
     this.save(state);
     this.broadcast(state);
     await this.schedule(state);
@@ -1037,9 +1031,14 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     const started = state.round.startedAt;
+    const now = Date.now();
     const end = started + state.round.durationSeconds * 1000;
-    const hint = started + (state.round.hints + 1) * HINT_INTERVAL_SECONDS * 1000;
-    await this.ctx.storage.setAlarm(Math.min(end, hint));
+    const countAt = started + HINT_COUNT_AT_SECONDS * 1000;
+    const categoryAt = started + HINT_CATEGORY_AT_SECONDS * 1000;
+    let next = end;
+    if (now < countAt) next = Math.min(next, countAt);
+    else if (now < categoryAt) next = Math.min(next, categoryAt);
+    await this.ctx.storage.setAlarm(next);
   }
 
   private broadcast(state: RoomState): void {
@@ -1138,8 +1137,11 @@ export class GameRoom extends DurableObject<Env> {
         youDraw = isPerformer && state.phase === "playing";
         if (!isPerformer && state.phase === "choosing") round.options = [];
         if (!isPerformer && state.phase === "playing") {
-          // Chinese words are only a few characters — revealing any gives it away, so keep it blank.
-          hiddenWord = buildHint(round.word, state.lang === "zh" ? 0 : round.hints);
+          // Staged hints: length after 20s, category after 40s. No blanks.
+          const elapsed = Math.floor((Date.now() - round.startedAt) / 1000);
+          if (elapsed < HINT_COUNT_AT_SECONDS) wordLength = 0;
+          if (elapsed < HINT_CATEGORY_AT_SECONDS) round.category = undefined;
+          hiddenWord = "";
           round.word = "";
           round.options = undefined;
         }

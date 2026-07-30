@@ -604,21 +604,6 @@ export default function App() {
                 </button>
               ))}
             </SettingGroup>
-            {game !== "yarnpals" && (
-              <SettingGroup title="Language">
-                {(["en", "zh"] as const).map((option) => (
-                  <button
-                    key={option}
-                    className={snapshot.lang === option ? "chip active" : "chip"}
-                    disabled={!host}
-                    title={!host ? hostOnlySettings : undefined}
-                    onClick={() => changeSettings({ lang: option })}
-                  >
-                    {option === "en" ? "English" : "中文"}
-                  </button>
-                ))}
-              </SettingGroup>
-            )}
             <div className="game-info">
               <p>{GAME_INFO[snapshot.game].blurb}</p>
               <p className="game-info-scoring">

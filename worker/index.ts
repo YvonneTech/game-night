@@ -1150,7 +1150,8 @@ export class GameRoom extends DurableObject<Env> {
         youDraw = isPerformer && state.phase === "playing";
         if (!isPerformer && state.phase === "choosing") round.options = [];
         if (!isPerformer && state.phase === "playing") {
-          hiddenWord = buildHint(round.word, round.hints);
+          // Chinese words are only a few characters — revealing any gives it away, so keep it blank.
+          hiddenWord = buildHint(round.word, state.lang === "zh" ? 0 : round.hints);
           round.word = "";
           round.options = undefined;
         }

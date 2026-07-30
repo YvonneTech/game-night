@@ -69,6 +69,7 @@ type RoomState = {
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
   yarn: YarnState | null;
+  solved: number;
   messages: Message[];
   strokes: Stroke[];
   emptyAt: number;
@@ -534,6 +535,7 @@ export class GameRoom extends DurableObject<Env> {
       guessRank: undefined,
     }));
     state.messages = [];
+    state.solved = 0;
 
     if (state.game === "yarnpals") {
       await this.startYarn(state);
@@ -701,30 +703,16 @@ export class GameRoom extends DurableObject<Env> {
         return;
       }
 
-      const drawers = round.drawOrder ?? [];
-      const turnsLeft = Math.max(0, drawers.length - (round.turnIndex ?? 0));
-      const speedBonus = turnsLeft * 10;
-      const guesserPoints = 50 + speedBonus;
-      const drawerPoints = 30 + Math.floor(speedBonus / 2);
-
+      // Pass the Pen is cooperative — no individual scoring, just count team wins.
       player.guessed = true;
-      player.roundPoints += guesserPoints;
-      player.score += guesserPoints;
       round.correctIds.push(player.id);
-
-      for (const id of drawers) {
-        const drawer = state.players.find((item) => item.id === id);
-        if (drawer) {
-          drawer.roundPoints += drawerPoints;
-          drawer.score += drawerPoints;
-        }
-      }
+      state.solved += 1;
 
       this.messages(state, {
         id: crypto.randomUUID(),
         playerId: player.id,
         playerName: player.name,
-        text: `guessed it! +${guesserPoints} (drawers +${drawerPoints})`,
+        text: state.lang === "zh" ? "猜对了! 🎉" : "guessed it! 🎉",
         at: Date.now(),
         correct: true,
       });
@@ -1214,6 +1202,7 @@ export class GameRoom extends DurableObject<Env> {
       rounds: 5,
       round: null,
       yarn: null,
+      solved: 0,
       messages: [],
       strokes: [],
       emptyAt: 0,

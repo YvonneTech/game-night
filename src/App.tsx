@@ -75,6 +75,7 @@ type Snapshot = {
   rounds: 1 | 5 | 10 | 15;
   round: Round | null;
   yarn: YarnState | null;
+  solved: number;
   messages: Message[];
   strokes: Stroke[];
   timeLeft: number;
@@ -942,7 +943,26 @@ export default function App() {
           <section className="result-panel">
             <p className="eyebrow">Round {round.number} complete</p>
             <h1>{round.word}</h1>
-            <ScoreRows players={players} myId={id} />
+            {game === "passthepen" ? (
+              <div className="coop-result">
+                <p className="coop-verdict">
+                  {round.correctIds.length > 0
+                    ? snapshot.lang === "zh"
+                      ? "✓ 猜对了!"
+                      : "✓ Guessed it!"
+                    : snapshot.lang === "zh"
+                      ? "✗ 没猜出来"
+                      : "✗ Not this time"}
+                </p>
+                <p className="muted">
+                  {snapshot.lang === "zh"
+                    ? `已猜中 ${snapshot.solved}/${snapshot.rounds} 轮`
+                    : `Solved ${snapshot.solved}/${snapshot.rounds} so far`}
+                </p>
+              </div>
+            ) : (
+              <ScoreRows players={players} myId={id} />
+            )}
             {host ? (
               <button className="primary" onClick={() => send("next")}>
                 {round.number >= snapshot.rounds ? "Results" : "Next round"}
@@ -954,7 +974,24 @@ export default function App() {
         </main>
       )}
 
-      {phase === "gameEnd" && snapshot && (
+      {phase === "gameEnd" && snapshot && game === "passthepen" && (
+        <main className="center">
+          <section className="result-panel wide">
+            <p className="eyebrow">{snapshot.lang === "zh" ? "团队战绩" : "Team result"}</p>
+            <h1>
+              {snapshot.solved} / {snapshot.rounds} 🎉
+            </h1>
+            <p className="muted">{snapshot.lang === "zh" ? "轮猜中" : "rounds guessed"}</p>
+            {host && (
+              <button className="primary" onClick={() => send("reset")}>
+                Play again
+              </button>
+            )}
+          </section>
+        </main>
+      )}
+
+      {phase === "gameEnd" && snapshot && game !== "passthepen" && (
         <main className="center">
           <section className="result-panel wide">
             <p className="eyebrow">Winner</p>

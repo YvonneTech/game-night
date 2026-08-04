@@ -1018,7 +1018,7 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
-  // ---------- Fake Artist (假画家) ----------
+  // ---------- Fake Artist (滥竽充画) ----------
   private async startFakeArtist(state: RoomState): Promise<void> {
     // Pick a drawable word from PICTIONARY_WORDS so it's visually guessable.
     const bank = PICTIONARY_WORDS[state.lang];

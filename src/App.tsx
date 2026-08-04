@@ -129,7 +129,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     yarnpals: "猫咪杯",
     undercover: "谁是卧底",
     wavelength: "心有灵犀",
-    fakeartist: "假画家",
+    fakeartist: "滥竽充画",
     telephone: "传声画筒",
   },
 };

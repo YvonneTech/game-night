@@ -3,8 +3,9 @@ import YarnPalsGame, { YarnSlot } from "./YarnPalsGame";
 import UndercoverGame, { UCView } from "./UndercoverGame";
 import WavelengthGame, { WVView } from "./WavelengthGame";
 import FakeArtistGame, { FAView } from "./FakeArtistGame";
+import TelephoneGame, { TPView } from "./TelephoneGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "landing" | "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -81,6 +82,7 @@ type Snapshot = {
   undercover: UCView | null;
   wavelength: WVView | null;
   fakeartist: FAView | null;
+  telephone: TPView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -119,6 +121,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     undercover: "Undercover",
     wavelength: "Wavelength",
     fakeartist: "Fake Artist",
+    telephone: "Telephone",
   },
   zh: {
     classic: "画画 & 表演",
@@ -127,6 +130,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     undercover: "谁是卧底",
     wavelength: "心有灵犀",
     fakeartist: "假画家",
+    telephone: "传声画筒",
   },
 };
 
@@ -164,6 +168,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "Everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their weird strokes! Needs 3+ players.",
       scoring: "Vote out the fake to win — real painters get +100 if they catch the fake, fake gets +100 if they fool everyone.",
     },
+    telephone: {
+      blurb:
+        "Everyone writes a secret sentence, then chains rotate: draw what you got, caption the drawing you got, and repeat. At the end, replay every chain to see how far it drifted. Needs 3+ players.",
+      scoring: "Just for laughs — no points.",
+    },
   },
   zh: {
     classic: {
@@ -189,6 +198,10 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     fakeartist: {
       blurb: "所有人在同一画布接力画画 — 假画家只知道类别，看不到词。靠画风找出卧底！需 3 人以上。",
       scoring: "投出假画家则真画家每人 +100；没投中则假画家 +100。",
+    },
+    telephone: {
+      blurb: "每人先偷偷写一句话,然后开始接龙:把收到的句子画出来,再给收到的画配上文字,轮流传下去。最后一起回放,看每条接龙是怎么越传越离谱的。需 3 人以上。",
+      scoring: "不计分,图一乐。",
     },
   },
 };
@@ -279,7 +292,12 @@ export default function App() {
   const round = snapshot?.round ?? null;
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
-  const minPlayers = game === "undercover" ? 4 : game === "passthepen" || game === "wavelength" || game === "fakeartist" ? 3 : 2;
+  const minPlayers =
+    game === "undercover"
+      ? 4
+      : game === "passthepen" || game === "wavelength" || game === "fakeartist" || game === "telephone"
+        ? 3
+        : 2;
   const hasJoinCode = joinCode.trim().length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
@@ -671,7 +689,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist"] as const).map((option) => (
+              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist", "telephone"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}
@@ -705,7 +723,7 @@ export default function App() {
                 ))}
               </SettingGroup>
             )}
-            {game !== "yarnpals" && game !== "undercover" && game !== "fakeartist" && (
+            {game !== "yarnpals" && game !== "undercover" && game !== "fakeartist" && game !== "telephone" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -792,6 +810,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.fakeartist && game === "fakeartist" && (
         <FakeArtistGame view={snapshot.fakeartist} myId={id} strokes={snapshot.strokes} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.telephone && game === "telephone" && (
+        <TelephoneGame view={snapshot.telephone} myId={id} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (

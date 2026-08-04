@@ -1,6 +1,6 @@
 # Game Night
 
-Party games for 2-6 friends — **six** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
+Party games for 2-6 friends — **seven** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
 
 ## 🎮 Play it live
 
@@ -16,6 +16,7 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **Undercover (谁是卧底)** — everyone gets a secret word, but the undercover(s) get a similar different one. Describe your word, then vote out the spy. 4+ players.
 - **Wavelength (心有灵犀)** — one player gives a clue for a hidden spot on a spectrum (cold ↔ hot); everyone else slides to guess it. 3+ players.
 - **Fake Artist (假画家)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
+- **Telephone (传声画筒)** — everyone writes a secret sentence, then chains rotate: draw what you got, caption the drawing you got, repeat. At the end every chain is replayed step-by-step so you can trace exactly where it drifted. 3+ players.
 
 English or 中文 word banks, chosen when you create a room.
 

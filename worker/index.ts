@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -88,6 +88,7 @@ type RoomState = {
   undercover: UndercoverState | null;
   wavelength: WVState | null;
   fakeartist: FAState | null;
+  telephone: TPState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -201,10 +202,52 @@ type FAView = {
   result: UCRole | null;
   reveal: Array<{ name: string; role: UCRole; word: string }> | null;
 };
-type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist"> & {
+// Telephone (传声画筒): each player owns one chain that everyone contributes to in
+// turn, alternating write → draw → write. Every entry is kept so the whole drift is
+// replayable at the end.
+type TPKind = "text" | "draw";
+type TPEntry = {
+  kind: TPKind;
+  authorId: string;
+  authorName: string;
+  text: string; // used when kind === "text"
+  strokes: Stroke[]; // used when kind === "draw"
+  auto?: boolean; // filled in for a skipped / disconnected player
+};
+type TPChain = { ownerId: string; ownerName: string; entries: TPEntry[] };
+type TPState = {
+  sub: "write" | "play" | "reveal";
+  step: number; // 0 = seed sentence; each chain ends with `totalSteps` entries
+  totalSteps: number; // = number of players at kickoff
+  order: string[]; // fixed roster; chain i is owned by order[i]
+  chains: TPChain[];
+  submitted: Record<string, boolean>; // who has submitted for the current step
+  revealChain: number; // host-driven walkthrough position
+  revealEntry: number;
+};
+
+// What one viewer sees. During play they only get their own prompt (the entry they
+// must respond to); the full chains are shared only once everyone reaches the reveal.
+type TPView = {
+  sub: "write" | "play" | "reveal";
+  step: number;
+  totalSteps: number;
+  kind: TPKind; // what I must produce this step
+  prompt: { kind: TPKind; text: string; strokes: Stroke[] } | null;
+  hasSubmitted: boolean;
+  isSpectator: boolean;
+  submittedCount: number;
+  totalPlayers: number;
+  reveal: TPChain[] | null;
+  revealChain: number;
+  revealEntry: number;
+};
+
+type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone"> & {
   undercover: UCView | null;
   wavelength: WVView | null;
   fakeartist: FAView | null;
+  telephone: TPView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -546,6 +589,18 @@ export class GameRoom extends DurableObject<Env> {
       case "faProceed":
         await this.faProceed(ws);
         break;
+      case "tpText":
+        await this.tpSubmit(ws, "text", command.payload);
+        break;
+      case "tpDraw":
+        await this.tpSubmit(ws, "draw", command.payload);
+        break;
+      case "tpSkip":
+        await this.tpSkip(ws);
+        break;
+      case "tpReveal":
+        await this.tpReveal(ws, command.payload);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -734,7 +789,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "yarnpals" ||
       payload.game === "undercover" ||
       payload.game === "wavelength" ||
-      payload.game === "fakeartist"
+      payload.game === "fakeartist" ||
+      payload.game === "telephone"
     ) {
       state.game = payload.game;
     }
@@ -757,7 +813,10 @@ export class GameRoom extends DurableObject<Env> {
     const minPlayers =
       state.game === "undercover"
         ? 4
-        : state.game === "passthepen" || state.game === "wavelength" || state.game === "fakeartist"
+        : state.game === "passthepen" ||
+            state.game === "wavelength" ||
+            state.game === "fakeartist" ||
+            state.game === "telephone"
           ? 3
           : 2;
     if (state.players.length < minPlayers) {
@@ -792,6 +851,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "fakeartist") {
       await this.startFakeArtist(state);
+      return;
+    }
+
+    if (state.game === "telephone") {
+      this.startTelephone(state);
       return;
     }
 
@@ -1173,6 +1237,183 @@ export class GameRoom extends DurableObject<Env> {
             word: fa.fakeIds.includes(p.id) ? (state.lang === "zh" ? "假画家" : "FAKE") : fa.word,
           }))
         : null,
+    };
+  }
+
+  // ---------- Telephone (传声画筒) ----------
+  private tpKindFor(step: number): TPKind {
+    // Seed sentence (step 0) is text; then alternate draw / caption.
+    return step % 2 === 0 ? "text" : "draw";
+  }
+
+  // At `step`, the player at order[j] works on the chain owned by order[(j - step) % n].
+  private tpChainIndexFor(order: string[], playerId: string, step: number): number {
+    const j = order.indexOf(playerId);
+    if (j < 0) return -1;
+    const n = order.length;
+    return (((j - step) % n) + n) % n;
+  }
+
+  private startTelephone(state: RoomState): void {
+    const order = this.shuffleIds(state.players.map((p) => p.id));
+    state.telephone = {
+      sub: "write",
+      step: 0,
+      totalSteps: order.length,
+      order,
+      chains: order.map((id) => ({
+        ownerId: id,
+        ownerName: this.playerName(state, id),
+        entries: [],
+      })),
+      submitted: {},
+      revealChain: 0,
+      revealEntry: 0,
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `传声画筒开始 — 先各自写一句话,之后接力画、接力猜,共 ${order.length} 步!`
+        : `Telephone started — everyone writes a sentence, then relay draw & guess for ${order.length} steps!`,
+    );
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private tpConnectedPlayers(state: RoomState): string[] {
+    const tp = state.telephone;
+    if (!tp) return [];
+    const connected = new Set(state.players.filter((p) => p.connected).map((p) => p.id));
+    return tp.order.filter((id) => connected.has(id));
+  }
+
+  private async tpSubmit(ws: WebSocket, kind: TPKind, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const tp = state.telephone;
+    if (!session || state.game !== "telephone" || !tp) return;
+    if (tp.sub !== "write" && tp.sub !== "play") return;
+    if (kind !== this.tpKindFor(tp.step)) return; // wrong action for this step
+    if (tp.submitted[session.playerId]) return; // already in
+    const chainIndex = this.tpChainIndexFor(tp.order, session.playerId, tp.step);
+    if (chainIndex < 0) return; // not part of this game
+    const chain = tp.chains[chainIndex];
+    if (!chain || chain.entries.length !== tp.step) return; // out of sync — ignore
+
+    const name = this.playerName(state, session.playerId);
+    let entry: TPEntry;
+    if (kind === "text") {
+      const text = isRecord(payload) ? asText(payload.text, "", 200) : "";
+      if (!text) return; // must write something
+      entry = { kind: "text", authorId: session.playerId, authorName: name, text, strokes: [] };
+    } else {
+      const strokes = isRecord(payload) ? normalizeStrokes(payload.strokes) : null;
+      if (!strokes || strokes.length === 0) return; // must draw something
+      entry = { kind: "draw", authorId: session.playerId, authorName: name, text: "", strokes };
+    }
+    chain.entries.push(entry);
+    tp.submitted[session.playerId] = true;
+
+    // Advance once every connected player has submitted this step.
+    const waiting = this.tpConnectedPlayers(state).filter((id) => !tp.submitted[id]);
+    if (waiting.length === 0) {
+      this.tpAdvance(state);
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async tpSkip(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const tp = state.telephone;
+    if (!this.isHost(ws, state) || !tp || (tp.sub !== "write" && tp.sub !== "play")) return;
+    this.tpAdvance(state);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private tpAdvance(state: RoomState): void {
+    const tp = state.telephone;
+    if (!tp) return;
+    const kind = this.tpKindFor(tp.step);
+
+    // Fill in a placeholder for anyone who didn't submit, so every chain stays the same length.
+    for (const id of tp.order) {
+      if (tp.submitted[id]) continue;
+      const chainIndex = this.tpChainIndexFor(tp.order, id, tp.step);
+      const chain = tp.chains[chainIndex];
+      if (!chain || chain.entries.length !== tp.step) continue;
+      const name = this.playerName(state, id);
+      chain.entries.push(
+        kind === "text"
+          ? { kind: "text", authorId: id, authorName: name, text: state.lang === "zh" ? "(跳过)" : "(skipped)", strokes: [], auto: true }
+          : { kind: "draw", authorId: id, authorName: name, text: "", strokes: [], auto: true },
+      );
+    }
+
+    tp.step += 1;
+    tp.submitted = {};
+
+    if (tp.step >= tp.totalSteps) {
+      tp.sub = "reveal";
+      tp.revealChain = 0;
+      tp.revealEntry = 0;
+      this.system(state, state.lang === "zh" ? "全部完成 — 一起看看每条线索是怎么跑偏的!" : "All done — let's trace how each chain drifted!");
+      return;
+    }
+
+    tp.sub = "play";
+    const nextKind = this.tpKindFor(tp.step);
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `第 ${tp.step + 1} 步:${nextKind === "draw" ? "把你收到的句子画出来" : "写出你看到的画是什么"}!`
+        : `Step ${tp.step + 1}: ${nextKind === "draw" ? "draw the sentence you received" : "write what the drawing shows"}!`,
+    );
+  }
+
+  private async tpReveal(ws: WebSocket, payload: unknown): Promise<void> {
+    const state = this.load();
+    const tp = state.telephone;
+    if (!this.isHost(ws, state) || !tp || tp.sub !== "reveal" || !isRecord(payload)) return;
+    const chain = typeof payload.chain === "number" ? Math.floor(payload.chain) : tp.revealChain;
+    const entry = typeof payload.entry === "number" ? Math.floor(payload.entry) : tp.revealEntry;
+    tp.revealChain = Math.max(0, Math.min(tp.chains.length - 1, chain));
+    tp.revealEntry = Math.max(0, Math.min(tp.totalSteps - 1, entry));
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private tpView(state: RoomState, playerId?: string): TPView | null {
+    const tp = state.telephone;
+    if (state.game !== "telephone" || !tp) return null;
+    const kind = this.tpKindFor(tp.step);
+    const revealing = tp.sub === "reveal";
+    const chainIndex = playerId ? this.tpChainIndexFor(tp.order, playerId, tp.step) : -1;
+    const isSpectator = !playerId || tp.order.indexOf(playerId) < 0;
+
+    let prompt: TPView["prompt"] = null;
+    if (!revealing && tp.step > 0 && chainIndex >= 0) {
+      const prev = tp.chains[chainIndex]?.entries[tp.step - 1];
+      if (prev) prompt = { kind: prev.kind, text: prev.text, strokes: prev.strokes };
+    }
+
+    const connected = this.tpConnectedPlayers(state);
+    return {
+      sub: tp.sub,
+      step: tp.step,
+      totalSteps: tp.totalSteps,
+      kind,
+      prompt,
+      hasSubmitted: !!playerId && !!tp.submitted[playerId],
+      isSpectator,
+      submittedCount: connected.filter((id) => tp.submitted[id]).length,
+      totalPlayers: connected.length,
+      reveal: revealing ? tp.chains : null,
+      revealChain: tp.revealChain,
+      revealEntry: tp.revealEntry,
     };
   }
 
@@ -1677,6 +1918,7 @@ export class GameRoom extends DurableObject<Env> {
     state.undercover = null;
     state.wavelength = null;
     state.fakeartist = null;
+    state.telephone = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -1875,6 +2117,27 @@ export class GameRoom extends DurableObject<Env> {
         this.save(state);
         this.broadcast(state);
         return;
+      }
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+
+    // Telephone: the roster is locked at kickoff, so keep the leaver's slot (their
+    // future turns become auto-filled placeholders) and just unblock the current step.
+    if (state.game === "telephone" && state.telephone && state.phase === "playing") {
+      const tp = state.telephone;
+      delete tp.submitted[playerId];
+      const connected = this.tpConnectedPlayers(state);
+      if (connected.length < 2) {
+        // Not enough people to keep passing — jump straight to the reveal.
+        if (tp.sub !== "reveal") {
+          tp.sub = "reveal";
+          tp.revealChain = 0;
+          tp.revealEntry = 0;
+        }
+      } else if ((tp.sub === "write" || tp.sub === "play") && connected.every((id) => tp.submitted[id])) {
+        this.tpAdvance(state);
       }
       this.save(state);
       this.broadcast(state);
@@ -2149,6 +2412,7 @@ export class GameRoom extends DurableObject<Env> {
       undercover: this.ucView(state, playerId),
       wavelength: this.wvView(state, playerId),
       fakeartist: this.faView(state, playerId),
+      telephone: this.tpView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -2221,9 +2485,12 @@ export class GameRoom extends DurableObject<Env> {
     }
     try {
       const parsed = JSON.parse(row.body) as RoomState;
-      // Migration: older rooms lack fakeartist
+      // Migration: older rooms lack fakeartist / telephone
       if ((parsed as unknown as Record<string, unknown>).fakeartist === undefined) {
         parsed.fakeartist = null;
+      }
+      if ((parsed as unknown as Record<string, unknown>).telephone === undefined) {
+        parsed.telephone = null;
       }
       return parsed;
     } catch {
@@ -2260,6 +2527,7 @@ export class GameRoom extends DurableObject<Env> {
       undercover: null,
       wavelength: null,
       fakeartist: null,
+      telephone: null,
       solved: 0,
       messages: [],
       strokes: [],

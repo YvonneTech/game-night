@@ -849,3 +849,46 @@ canvas {
   .join-line, .guess-row { grid-template-columns: 1fr; }
   .tools, .round-bar, .prompt-bar { align-items: stretch; flex-direction: column; }
 }
+
+/* Telephone (传声画筒) */
+.tp-input {
+  width: 100%;
+  border: 3px solid var(--strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 700;
+  background: var(--panel);
+  color: var(--ink);
+  resize: vertical;
+}
+.tp-input:focus { outline: none; box-shadow: 0 0 0 3px var(--blue); }
+.tp-chain-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tp-canvas-wrap {
+  border: 3px solid var(--strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  line-height: 0;
+}
+.tp-canvas-wrap canvas { width: 100%; display: block; touch-action: none; }
+.tp-reveal-list { display: flex; flex-direction: column; gap: 14px; }
+.tp-reveal-item { display: flex; flex-direction: column; gap: 6px; }
+.tp-step-tag {
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.tp-bubble {
+  margin: 0;
+  border: 3px solid var(--strong);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 12px 14px;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+.tp-bubble.auto { color: var(--muted); font-style: italic; font-weight: 700; }

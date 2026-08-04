@@ -120,7 +120,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     yarnpals: "Kitty Cup",
     undercover: "Undercover",
     wavelength: "Wavelength",
-    fakeartist: "Fake Artist",
+    fakeartist: "Sketchy",
     telephone: "Telephone",
   },
   zh: {

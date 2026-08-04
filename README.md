@@ -15,7 +15,7 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **Kitty Cup (猫咪杯)** — a frantic 3v3 yarn-ball soccer match with random teams (bots fill empty spots).
 - **Undercover (谁是卧底)** — everyone gets a secret word, but the undercover(s) get a similar different one. Describe your word, then vote out the spy. 4+ players.
 - **Wavelength (心有灵犀)** — one player gives a clue for a hidden spot on a spectrum (cold ↔ hot); everyone else slides to guess it. 3+ players.
-- **Fake Artist (滥竽充画)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
+- **Sketchy (滥竽充画)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
 - **Telephone (传声画筒)** — everyone writes a secret sentence, then chains rotate: draw what you got, caption the drawing you got, repeat. At the end every chain is replayed step-by-step so you can trace exactly where it drifted. 3+ players.
 
 English or 中文 word banks, chosen when you create a room.

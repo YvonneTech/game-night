@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -87,6 +87,7 @@ type RoomState = {
   yarn: YarnState | null;
   undercover: UndercoverState | null;
   wavelength: WVState | null;
+  fakeartist: FAState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -157,9 +158,53 @@ type WVView = {
   results: Array<{ name: string; guess: number; points: number }> | null;
   psychicPoints: number;
 };
-type Snapshot = Omit<RoomState, "undercover" | "wavelength"> & {
+
+type FAState = {
+  sub: "draw" | "vote" | "reveal";
+  word: string;
+  category: string;
+  fakeIds: string[];
+  order: string[];
+  laps: number;
+  turnIndex: number;
+  turnStartedAt: number;
+  turnSeconds: number;
+  turnStrokeStart: number;
+  votes: Record<string, string>;
+  candidates: string[];
+  eliminated: { id: string; name: string; role: UCRole; word: string } | null;
+  result: UCRole | null;
+};
+
+type FAMemberView = { id: string; name: string; connected: boolean; voted: boolean };
+type FAView = {
+  sub: "draw" | "vote" | "reveal";
+  word: string;
+  category: string;
+  isFake: boolean;
+  fakeCount: number;
+  order: string[];
+  laps: number;
+  turnIndex: number;
+  totalTurns: number;
+  currentId: string;
+  currentName: string;
+  turnTimeLeft: number;
+  turnSeconds: number;
+  turnStrokeStart: number;
+  youDraw: boolean;
+  youVote: boolean;
+  hasVoted: boolean;
+  candidates: string[];
+  members: FAMemberView[];
+  eliminated: { name: string } | null;
+  result: UCRole | null;
+  reveal: Array<{ name: string; role: UCRole; word: string }> | null;
+};
+type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist"> & {
   undercover: UCView | null;
   wavelength: WVView | null;
+  fakeartist: FAView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -175,6 +220,8 @@ const HINT_COUNT_AT_SECONDS = 20; // reveal the word length after this long
 const HINT_CATEGORY_AT_SECONDS = 40; // reveal the category after this long
 const TURN_SECONDS = 12;
 const FINAL_GUESS_SECONDS = 30;
+const FA_TURN_SECONDS = 10;
+const FA_LAPS = 2;
 const MAX_PLAYERS = 6;
 const MAX_MESSAGES = 100;
 const SCORE_BY_RANK = [100, 80, 60, 40, 20];
@@ -487,6 +534,18 @@ export class GameRoom extends DurableObject<Env> {
       case "wvNext":
         await this.wvNext(ws);
         break;
+      case "faPass":
+        await this.faPass(ws);
+        break;
+      case "faVote":
+        await this.faVote(ws, command.payload);
+        break;
+      case "faTally":
+        await this.faTally(ws);
+        break;
+      case "faProceed":
+        await this.faProceed(ws);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -571,6 +630,17 @@ export class GameRoom extends DurableObject<Env> {
       if (!round?.turnStartedAt) return;
       if (this.turnTimeLeft(state) <= 0) {
         await this.advanceTurn(state);
+      } else {
+        await this.schedule(state);
+      }
+      return;
+    }
+
+    if (state.game === "fakeartist") {
+      const fa = state.fakeartist;
+      if (!fa || fa.sub !== "draw") return;
+      if (this.faTurnTimeLeft(state) <= 0) {
+        await this.faAdvanceTurn(state);
       } else {
         await this.schedule(state);
       }
@@ -663,7 +733,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "passthepen" ||
       payload.game === "yarnpals" ||
       payload.game === "undercover" ||
-      payload.game === "wavelength"
+      payload.game === "wavelength" ||
+      payload.game === "fakeartist"
     ) {
       state.game = payload.game;
     }
@@ -684,7 +755,11 @@ export class GameRoom extends DurableObject<Env> {
     const state = this.load();
     if (!this.isHost(ws, state)) return;
     const minPlayers =
-      state.game === "undercover" ? 4 : state.game === "passthepen" || state.game === "wavelength" ? 3 : 2;
+      state.game === "undercover"
+        ? 4
+        : state.game === "passthepen" || state.game === "wavelength" || state.game === "fakeartist"
+          ? 3
+          : 2;
     if (state.players.length < minPlayers) {
       this.error(ws, `Need at least ${minPlayers} players.`);
       return;
@@ -712,6 +787,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "wavelength") {
       this.startWavelength(state);
+      return;
+    }
+
+    if (state.game === "fakeartist") {
+      await this.startFakeArtist(state);
       return;
     }
 
@@ -871,6 +951,228 @@ export class GameRoom extends DurableObject<Env> {
         if (vals.length === 0) return 0;
         return Math.round(vals.reduce((s, g) => s + wvPoints(g, wv.target), 0) / vals.length);
       })(),
+    };
+  }
+
+  // ---------- Fake Artist (假画家) ----------
+  private async startFakeArtist(state: RoomState): Promise<void> {
+    // Pick a drawable word from PICTIONARY_WORDS so it's visually guessable.
+    const bank = PICTIONARY_WORDS[state.lang];
+    const categories = Object.keys(bank);
+    const cat = categories[crypto.getRandomValues(new Uint32Array(1))[0] % categories.length];
+    const words = bank[cat];
+    const word = words[crypto.getRandomValues(new Uint32Array(1))[0] % words.length];
+    const fakeCount = state.players.length >= 6 ? 2 : 1;
+    const shuffled = this.shuffleIds(state.players.map((p) => p.id));
+    const fakeIds = shuffled.slice(0, fakeCount);
+    const order = this.shuffleIds(state.players.map((p) => p.id));
+
+    state.fakeartist = {
+      sub: "draw",
+      word,
+      category: cat,
+      fakeIds,
+      order,
+      laps: FA_LAPS,
+      turnIndex: 0,
+      turnStartedAt: Date.now(),
+      turnSeconds: FA_TURN_SECONDS,
+      turnStrokeStart: 0,
+      votes: {},
+      candidates: [],
+      eliminated: null,
+      result: null,
+    };
+    state.phase = "playing";
+    state.strokes = [];
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `假画家已选定 — 类别「${cat}」· 每人${FA_LAPS}次，共${order.length * FA_LAPS}轮，然后投票！`
+        : `Fake artist chosen — category "${cat}" · ${order.length * FA_LAPS} turns (${FA_LAPS} laps), then vote!`,
+    );
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private faTurnTimeLeft(state: RoomState): number {
+    const fa = state.fakeartist;
+    if (state.phase !== "playing" || state.game !== "fakeartist" || !fa || fa.sub !== "draw") return 0;
+    const elapsed = Math.floor((Date.now() - fa.turnStartedAt) / 1000);
+    return Math.max(0, fa.turnSeconds - elapsed);
+  }
+
+  private async faAdvanceTurn(state: RoomState): Promise<void> {
+    const fa = state.fakeartist;
+    if (!fa || fa.sub !== "draw") return;
+    const total = fa.order.length * fa.laps;
+    const next = fa.turnIndex + 1;
+    if (next >= total) {
+      fa.sub = "vote";
+      fa.votes = {};
+      fa.candidates = [];
+      this.system(state, state.lang === "zh" ? "作画结束 — 投票选出假画家!" : "Drawing done — vote for the fake artist!");
+      this.save(state);
+      await this.ctx.storage.deleteAlarm();
+      this.broadcast(state);
+      return;
+    }
+    fa.turnIndex = next;
+    fa.turnStartedAt = Date.now();
+    fa.turnStrokeStart = state.strokes.length;
+    const nextId = fa.order[next % fa.order.length];
+    this.system(state, `${this.playerName(state, nextId)}'s turn to draw`);
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private async faPass(ws: WebSocket): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const fa = state.fakeartist;
+    if (!session || state.game !== "fakeartist" || !fa || fa.sub !== "draw") return;
+    const currentId = fa.order[fa.turnIndex % fa.order.length];
+    if (session.playerId !== currentId) return;
+    await this.faAdvanceTurn(state);
+  }
+
+  private faEligibleVoters(state: RoomState): string[] {
+    const fa = state.fakeartist;
+    if (!fa) return [];
+    const alive = state.players.map((p) => p.id);
+    return alive.filter((id) => !(fa.candidates.length && fa.candidates.includes(id)));
+  }
+
+  private async faVote(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const fa = state.fakeartist;
+    if (!session || !fa || fa.sub !== "vote" || !isRecord(payload)) return;
+    if (!state.players.some((p) => p.id === session.playerId)) return;
+    if (fa.candidates.length && fa.candidates.includes(session.playerId)) return;
+    const target = asText(payload.targetId, "", 80);
+    if (!state.players.some((p) => p.id === target)) return;
+    if (fa.candidates.length && !fa.candidates.includes(target)) return;
+    // Must vote for someone else
+    if (target === session.playerId) return;
+    fa.votes[session.playerId] = target;
+    const eligible = this.faEligibleVoters(state);
+    if (eligible.every((id) => fa.votes[id] !== undefined)) {
+      this.faResolveVotes(state);
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async faTally(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const fa = state.fakeartist;
+    if (!this.isHost(ws, state) || !fa || fa.sub !== "vote") return;
+    this.faResolveVotes(state);
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private faResolveVotes(state: RoomState): void {
+    const fa = state.fakeartist;
+    if (!fa) return;
+    const tally: Record<string, number> = {};
+    for (const target of Object.values(fa.votes)) tally[target] = (tally[target] ?? 0) + 1;
+    let max = 0;
+    for (const n of Object.values(tally)) max = Math.max(max, n);
+    const top = Object.keys(tally).filter((id) => tally[id] === max);
+    if (max === 0) {
+      const alive = state.players.map((p) => p.id);
+      top.push(alive[crypto.getRandomValues(new Uint32Array(1))[0] % alive.length]);
+    }
+    if (top.length > 1) {
+      if (fa.candidates.length === 0) {
+        fa.candidates = top;
+        fa.votes = {};
+        this.system(state, state.lang === "zh" ? "平票!在平票者之间重新投票。" : "Tie! Re-vote among the tied players.");
+        return;
+      }
+    }
+    const outId = top.length === 1 ? top[0] : top[crypto.getRandomValues(new Uint32Array(1))[0] % top.length];
+    const isFake = fa.fakeIds.includes(outId);
+    const player = state.players.find((p) => p.id === outId);
+    const word = fa.word;
+    // For display, role is spy=fake, civ=real painter
+    fa.eliminated = { id: outId, name: player?.name ?? "Player", role: isFake ? "spy" : "civ", word };
+    // Scoring / result
+    if (isFake) {
+      fa.result = "civ";
+      // Civs win: reward all non-fakes, penalize nothing
+      for (const p of state.players) {
+        if (!fa.fakeIds.includes(p.id)) p.score += 100;
+        else p.score += 0;
+      }
+    } else {
+      fa.result = "spy";
+      for (const p of state.players) {
+        if (fa.fakeIds.includes(p.id)) p.score += 100;
+      }
+    }
+    fa.candidates = [];
+    fa.sub = "reveal";
+  }
+
+  private async faProceed(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const fa = state.fakeartist;
+    if (!this.isHost(ws, state) || !fa || fa.sub !== "reveal") return;
+    state.phase = "gameEnd";
+    this.save(state);
+    await this.ctx.storage.deleteAlarm();
+    this.broadcast(state);
+  }
+
+  private faView(state: RoomState, playerId?: string): FAView | null {
+    const fa = state.fakeartist;
+    if (state.game !== "fakeartist" || !fa) return null;
+    const gameOver = state.phase === "gameEnd";
+    const isFake = !!playerId && fa.fakeIds.includes(playerId);
+    const totalTurns = fa.order.length * fa.laps;
+    const currentId = fa.sub === "draw" ? fa.order[fa.turnIndex % fa.order.length] : "";
+    const eligible = new Set(this.faEligibleVoters(state));
+    const members: FAMemberView[] = state.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      connected: p.connected,
+      voted: fa.votes[p.id] !== undefined,
+    }));
+    return {
+      sub: fa.sub,
+      word: fa.word,
+      category: fa.category,
+      isFake,
+      fakeCount: fa.fakeIds.length,
+      order: fa.order,
+      laps: fa.laps,
+      turnIndex: fa.turnIndex,
+      totalTurns,
+      currentId,
+      currentName: state.players.find((p) => p.id === currentId)?.name ?? "",
+      turnTimeLeft: this.faTurnTimeLeft(state),
+      turnSeconds: fa.turnSeconds,
+      turnStrokeStart: fa.turnStrokeStart,
+      youDraw: fa.sub === "draw" && currentId === playerId,
+      youVote: fa.sub === "vote" && !!playerId && eligible.has(playerId) && fa.votes[playerId] === undefined,
+      hasVoted: !!playerId && fa.votes[playerId] !== undefined,
+      candidates: fa.candidates,
+      members,
+      eliminated: fa.eliminated ? { name: fa.eliminated.name } : null,
+      result: fa.result,
+      reveal: gameOver
+        ? state.players.map((p) => ({
+            name: p.name,
+            role: fa.fakeIds.includes(p.id) ? "spy" : "civ",
+            word: fa.fakeIds.includes(p.id) ? (state.lang === "zh" ? "假画家" : "FAKE") : fa.word,
+          }))
+        : null,
     };
   }
 
@@ -1207,6 +1509,19 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "fakeartist") {
+      const fa = state.fakeartist;
+      if (!fa || fa.sub !== "draw") return;
+      const currentId = fa.order[fa.turnIndex % fa.order.length];
+      if (session.playerId !== currentId) return;
+      const keep = fa.turnStrokeStart;
+      if (strokes.length < keep) return;
+      state.strokes = strokes;
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+
     if (state.round?.mode !== "pictionary") return;
     if (state.round.performerId !== session.playerId) return;
     state.strokes = strokes;
@@ -1361,6 +1676,7 @@ export class GameRoom extends DurableObject<Env> {
     state.yarn = null;
     state.undercover = null;
     state.wavelength = null;
+    state.fakeartist = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -1508,6 +1824,63 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // Fake Artist: keep drawing/voting coherent when a player leaves
+    if (state.game === "fakeartist" && state.fakeartist && state.phase === "playing") {
+      const fa = state.fakeartist;
+      fa.fakeIds = fa.fakeIds.filter((id) => id !== playerId);
+      // Ensure at least one fake remains; promote a random civ if needed
+      if (fa.fakeIds.length === 0 && state.players.length >= 3) {
+        const remaining = state.players.map((p) => p.id);
+        fa.fakeIds = [remaining[crypto.getRandomValues(new Uint32Array(1))[0] % remaining.length]];
+      }
+      fa.order = fa.order.filter((id) => id !== playerId);
+      fa.candidates = fa.candidates.filter((id) => id !== playerId);
+      delete fa.votes[playerId];
+      // Remove votes for the leaving player as target
+      for (const voter of Object.keys(fa.votes)) {
+        if (fa.votes[voter] === playerId) delete fa.votes[voter];
+      }
+      if (state.players.length < 3) {
+        state.phase = "gameEnd";
+        fa.result = "civ";
+        this.save(state);
+        this.broadcast(state);
+        return;
+      }
+      if (fa.sub === "draw") {
+        const total = fa.order.length * fa.laps;
+        if (fa.turnIndex >= total) {
+          fa.sub = "vote";
+          fa.votes = {};
+          fa.candidates = [];
+          this.system(state, state.lang === "zh" ? "作画结束 — 投票选出假画家!" : "Drawing done — vote for the fake artist!");
+        } else {
+          // Fix turnIndex if current drawer left or order shrunk
+          const currentId = fa.order[fa.turnIndex % fa.order.length];
+          if (!currentId || currentId === playerId) {
+            fa.turnStartedAt = Date.now();
+            fa.turnStrokeStart = state.strokes.length;
+          }
+        }
+        this.save(state);
+        await this.schedule(state);
+        this.broadcast(state);
+        return;
+      }
+      if (fa.sub === "vote") {
+        const eligible = this.faEligibleVoters(state);
+        if (eligible.length > 0 && eligible.every((id) => fa.votes[id] !== undefined)) {
+          this.faResolveVotes(state);
+        }
+        this.save(state);
+        this.broadcast(state);
+        return;
+      }
+      this.save(state);
+      this.broadcast(state);
+      return;
+    }
+
     if (wasPerformer && state.phase === "playing") {
       await this.endRound(state);
       return;
@@ -1636,6 +2009,16 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "fakeartist") {
+      const fa = state.fakeartist;
+      if (!fa || fa.sub !== "draw") {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      await this.ctx.storage.setAlarm(fa.turnStartedAt + fa.turnSeconds * 1000);
+      return;
+    }
+
     if (!state.round?.word) {
       await this.ctx.storage.deleteAlarm();
       return;
@@ -1758,11 +2141,14 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
 
+    // Fake artist doesn't use Round but we provide dummy for UI consistency
+    // Ensure strokes remain visible for all during FA
     return {
       ...state,
       round,
       undercover: this.ucView(state, playerId),
       wavelength: this.wvView(state, playerId),
+      fakeartist: this.faView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -1834,7 +2220,12 @@ export class GameRoom extends DurableObject<Env> {
       return state;
     }
     try {
-      return JSON.parse(row.body) as RoomState;
+      const parsed = JSON.parse(row.body) as RoomState;
+      // Migration: older rooms lack fakeartist
+      if ((parsed as unknown as Record<string, unknown>).fakeartist === undefined) {
+        parsed.fakeartist = null;
+      }
+      return parsed;
     } catch {
       const state = this.empty("ROOM");
       this.save(state);
@@ -1868,6 +2259,7 @@ export class GameRoom extends DurableObject<Env> {
       yarn: null,
       undercover: null,
       wavelength: null,
+      fakeartist: null,
       solved: 0,
       messages: [],
       strokes: [],

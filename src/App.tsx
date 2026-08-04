@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YarnPalsGame, { YarnSlot } from "./YarnPalsGame";
 import UndercoverGame, { UCView } from "./UndercoverGame";
 import WavelengthGame, { WVView } from "./WavelengthGame";
+import FakeArtistGame, { FAView } from "./FakeArtistGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "landing" | "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -79,6 +80,7 @@ type Snapshot = {
   yarn: YarnState | null;
   undercover: UCView | null;
   wavelength: WVView | null;
+  fakeartist: FAView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -110,8 +112,22 @@ const COLORS = ["#4f7cff", "#e0576f", "#18a67d", "#f4c542", "#8b6be8", "#ef7d33"
 const ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
-  en: { classic: "Draw & Act", passthepen: "Pass the Pen", yarnpals: "Kitty Cup", undercover: "Undercover", wavelength: "Wavelength" },
-  zh: { classic: "画画 & 表演", passthepen: "接力画", yarnpals: "猫咪杯", undercover: "谁是卧底", wavelength: "心有灵犀" },
+  en: {
+    classic: "Draw & Act",
+    passthepen: "Pass the Pen",
+    yarnpals: "Kitty Cup",
+    undercover: "Undercover",
+    wavelength: "Wavelength",
+    fakeartist: "Fake Artist",
+  },
+  zh: {
+    classic: "画画 & 表演",
+    passthepen: "接力画",
+    yarnpals: "猫咪杯",
+    undercover: "谁是卧底",
+    wavelength: "心有灵犀",
+    fakeartist: "假画家",
+  },
 };
 
 const MODE_LABELS: Record<"en" | "zh", Record<GameMode, string>> = {
@@ -143,6 +159,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "One player sees a hidden target on a spectrum (e.g. cold ↔ hot) and gives a clue; everyone else slides to guess where it is. Rotates each round. Needs 3+ players.",
       scoring: "The closer your guess, the more points (bullseye 4 / near 3 / close 2). The clue-giver scores from the team average.",
     },
+    fakeartist: {
+      blurb:
+        "Everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their weird strokes! Needs 3+ players.",
+      scoring: "Vote out the fake to win — real painters get +100 if they catch the fake, fake gets +100 if they fool everyone.",
+    },
   },
   zh: {
     classic: {
@@ -164,6 +185,10 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     wavelength: {
       blurb: "一人看到刻度上的隐藏目标(如 冷 ↔ 热)并给线索,其他人拖滑块猜位置。每轮轮换。需 3 人以上。",
       scoring: "猜得越近分越高(正中 4 / 很近 3 / 接近 2);线索人按大家平均表现得分。",
+    },
+    fakeartist: {
+      blurb: "所有人在同一画布接力画画 — 假画家只知道类别，看不到词。靠画风找出卧底！需 3 人以上。",
+      scoring: "投出假画家则真画家每人 +100；没投中则假画家 +100。",
     },
   },
 };
@@ -254,7 +279,7 @@ export default function App() {
   const round = snapshot?.round ?? null;
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
-  const minPlayers = game === "undercover" ? 4 : game === "passthepen" || game === "wavelength" ? 3 : 2;
+  const minPlayers = game === "undercover" ? 4 : game === "passthepen" || game === "wavelength" || game === "fakeartist" ? 3 : 2;
   const hasJoinCode = joinCode.trim().length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
@@ -646,7 +671,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength"] as const).map((option) => (
+              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}
@@ -680,7 +705,7 @@ export default function App() {
                 ))}
               </SettingGroup>
             )}
-            {game !== "yarnpals" && game !== "undercover" && (
+            {game !== "yarnpals" && game !== "undercover" && game !== "fakeartist" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -763,6 +788,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.wavelength && game === "wavelength" && (
         <WavelengthGame view={snapshot.wavelength} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.fakeartist && game === "fakeartist" && (
+        <FakeArtistGame view={snapshot.fakeartist} myId={id} strokes={snapshot.strokes} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (
@@ -1097,7 +1126,46 @@ export default function App() {
         </main>
       )}
 
-      {phase === "gameEnd" && snapshot && game !== "passthepen" && game !== "undercover" && (
+      {phase === "gameEnd" && snapshot && game === "fakeartist" && (
+        <main className="center">
+          <section className="result-panel wide">
+            <p className="eyebrow">{snapshot.lang === "zh" ? "游戏结束" : "Game over"}</p>
+            <h1>
+              {snapshot.fakeartist?.result === "civ"
+                ? snapshot.lang === "zh"
+                  ? "真画家获胜 🎉"
+                  : "Painters win 🎉"
+                : snapshot.lang === "zh"
+                  ? "假画家获胜 🕵️"
+                  : "Fake artist wins 🕵️"}
+            </h1>
+            <div className="uc-reveal-list">
+              {snapshot.fakeartist?.reveal?.map((r, i) => (
+                <div key={i} className={`uc-reveal-row ${r.role === "spy" ? "spy" : ""}`}>
+                  <strong>{r.name}</strong>
+                  <span>
+                    {r.role === "spy"
+                      ? snapshot.lang === "zh"
+                        ? "假画家"
+                        : "Fake"
+                      : snapshot.lang === "zh"
+                        ? "真画家"
+                        : "Painter"}
+                  </span>
+                  <em>{r.word}</em>
+                </div>
+              ))}
+            </div>
+            {host && (
+              <button className="primary" onClick={() => send("reset")}>
+                {snapshot.lang === "zh" ? "再来一局" : "Play again"}
+              </button>
+            )}
+          </section>
+        </main>
+      )}
+
+      {phase === "gameEnd" && snapshot && game !== "passthepen" && game !== "undercover" && game !== "fakeartist" && (
         <main className="center">
           <section className="result-panel wide">
             <p className="eyebrow">Winner</p>

@@ -5,8 +5,9 @@ import WavelengthGame, { WVView } from "./WavelengthGame";
 import FakeArtistGame, { FAView } from "./FakeArtistGame";
 import TelephoneGame, { TPView } from "./TelephoneGame";
 import PunchlineGame, { PLView } from "./PunchlineGame";
+import BalderdashGame, { BDView } from "./BalderdashGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash";
 type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "landing" | "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
@@ -85,6 +86,7 @@ type Snapshot = {
   fakeartist: FAView | null;
   telephone: TPView | null;
   punchline: PLView | null;
+  balderdash: BDView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -125,6 +127,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     fakeartist: "Sketchy",
     telephone: "Telephone",
     punchline: "Punchline",
+    balderdash: "Balderdash",
   },
   zh: {
     classic: "画画 & 表演",
@@ -135,6 +138,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     fakeartist: "滥竽充画",
     telephone: "传声画筒",
     punchline: "神回复",
+    balderdash: "胡说八道",
   },
 };
 
@@ -182,6 +186,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "Each round everyone answers the same silly prompt, then all the answers show up anonymously and everyone votes for their favorite — you just can't vote for your own. 3 prompts, needs 3+ players.",
       scoring: "Every vote your answer gets is worth 100 points — most points after all rounds wins.",
     },
+    balderdash: {
+      blurb:
+        "Obscure word, fake definitions. Everyone invents a believable definition, then votes for the REAL one. Fool others + find the truth. 3 words, needs 3+ players.",
+      scoring: "+100 for spotting the real definition, +50 for each player you fool.",
+    },
   },
   zh: {
     classic: {
@@ -215,6 +224,10 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     punchline: {
       blurb: "每一轮所有人回答同一个搞笑题目,然后所有回答匿名亮出,大家投票选出最好笑的一条 —— 只是不能投自己。共 3 题,需 3 人以上。",
       scoring: "你的回答每得一票 = 100 分,全部结束后总分最高者获胜。",
+    },
+    balderdash: {
+      blurb: "生僻词+瞎编。每人给同一个生僻词编一个假解释,然后投票找出真正的解释。骗到人得分,找对真相也得分。共3词,需3人以上。",
+      scoring: "找出真解释+100,你的假解释每骗到1人+50。",
     },
   },
 };
@@ -308,7 +321,12 @@ export default function App() {
   const minPlayers =
     game === "undercover"
       ? 4
-      : game === "passthepen" || game === "wavelength" || game === "fakeartist" || game === "telephone" || game === "punchline"
+      : game === "passthepen" ||
+          game === "wavelength" ||
+          game === "fakeartist" ||
+          game === "telephone" ||
+          game === "punchline" ||
+          game === "balderdash"
         ? 3
         : 2;
   const hasJoinCode = joinCode.trim().length > 0;
@@ -702,7 +720,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist", "telephone", "punchline"] as const).map((option) => (
+              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist", "telephone", "punchline", "balderdash"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}
@@ -740,7 +758,8 @@ export default function App() {
               game !== "undercover" &&
               game !== "fakeartist" &&
               game !== "telephone" &&
-              game !== "punchline" && (
+              game !== "punchline" &&
+              game !== "balderdash" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -835,6 +854,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.punchline && game === "punchline" && (
         <PunchlineGame view={snapshot.punchline} myId={id} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.balderdash && game === "balderdash" && (
+        <BalderdashGame view={snapshot.balderdash} myId={id} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (

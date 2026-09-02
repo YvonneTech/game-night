@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -90,6 +90,7 @@ type RoomState = {
   fakeartist: FAState | null;
   telephone: TPState | null;
   punchline: PLState | null;
+  balderdash: BDState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -289,12 +290,61 @@ type PLView = {
   scores: Array<{ name: string; score: number }> | null;
 };
 
-type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline"> & {
+// Balderdash (胡说八道): everyone invents a fake definition for an obscure word.
+// Then all fakes + the real definition are shown shuffled; everyone votes for
+// which they think is REAL. Points for guessing right + fooling others.
+type BDState = {
+  sub: "define" | "vote" | "score";
+  order: string[]; // fixed roster
+  words: Array<{ word: string; definition: string }>; // one per round
+  round: number;
+  totalRounds: number;
+  definitions: Record<string, string>; // playerId -> fake definition
+  submitted: Record<string, boolean>;
+  defineDeadline: number;
+  displayOrder: string[]; // shuffled: playerIds + "__REAL__" sentinel
+  votes: Record<string, number>; // voterId -> index into displayOrder
+  voteDeadline: number;
+  revealed: boolean;
+  hintLevel: number; // 0 = no hint, 1 = small hint, 2 = bigger hint (host-triggered, define phase only)
+};
+
+type BDView = {
+  sub: "define" | "vote" | "score";
+  round: number;
+  totalRounds: number;
+  word: string;
+  hasSubmitted: boolean;
+  submittedCount: number;
+  totalPlayers: number;
+  defineDeadline: number;
+  isSpectator: boolean;
+  hint: string | null; // revealed hint text during define phase, null if none
+  hintLevel: number;
+  options: Array<{
+    text: string;
+    isMine: boolean;
+    author: string | null;
+    votes: number | null;
+    isReal: boolean | null; // revealed only
+  }> | null;
+  myVote: number | null;
+  hasVoted: boolean;
+  votedCount: number;
+  eligibleCount: number;
+  voteDeadline: number;
+  revealed: boolean;
+  guessedReal: boolean | null; // revealed only, did I find the truth?
+  scores: Array<{ name: string; score: number }> | null;
+};
+
+type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash"> & {
   undercover: UCView | null;
   wavelength: WVView | null;
   fakeartist: FAView | null;
   telephone: TPView | null;
   punchline: PLView | null;
+  balderdash: BDView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -313,6 +363,10 @@ const PL_ANSWER_SECONDS = 60; // time to answer the round's prompt
 const PL_VOTE_SECONDS = 25; // voting window per round
 const PL_REVEAL_SECONDS = 7; // how long the results are shown before advancing
 const PL_ROUNDS = 3; // number of prompts per game
+const BD_DEFINE_SECONDS = 60;
+const BD_VOTE_SECONDS = 30;
+const BD_REVEAL_SECONDS = 8;
+const BD_ROUNDS = 3;
 
 // Punchline prompts — open, silly fill-in-the-blanks. Everyone answers the same one each
 // round, so they're deliberately broad enough for lots of different funny answers.
@@ -560,6 +614,253 @@ const PL_PROMPTS: Record<Lang, string[]> = {
     "在公司微波炉里最不该热的东西",
     "一个被否决的动物园景点",
     "最奇怪的收藏爱好",
+  ],
+};
+// Balderdash words — obscure but real, with short true definitions.
+// Expanded bank: 120 EN + 120 ZH.
+const BD_WORDS: Record<Lang, Array<{ word: string; definition: string }>> = {
+  en: [
+    { word: "Bumfuzzle", definition: "To confuse or perplex" },
+    { word: "Snollygoster", definition: "A clever, unscrupulous person" },
+    { word: "Wamble", definition: "A stomach rumble" },
+    { word: "Jentacular", definition: "Pertaining to breakfast" },
+    { word: "Quockerwodger", definition: "A puppet politician" },
+    { word: "Apricity", definition: "The warmth of the sun in winter" },
+    { word: "Pandiculation", definition: "Stretching when you wake up" },
+    { word: "Agelast", definition: "A person who never laughs" },
+    { word: "Gongoozler", definition: "Someone who stares at canal boats" },
+    { word: "Nudiustertian", definition: "Relating to the day before yesterday" },
+    { word: "Ultracrepidarian", definition: "Someone who gives opinions beyond their knowledge" },
+    { word: "Limerence", definition: "An intense, obsessive infatuation" },
+    { word: "Kummerspeck", definition: "Weight gained from emotional eating" },
+    { word: "Mamihlapinatapai", definition: "A look shared expecting the other to act" },
+    { word: "Xertz", definition: "To gulp down quickly and greedily" },
+    { word: "Zugzwang", definition: "A chess position where any move worsens you" },
+    { word: "Petrichor", definition: "The smell of earth after rain" },
+    { word: "Doodle sack", definition: "An old word for bagpipes" },
+    { word: "Winklepicker", definition: "A shoe with a long pointed toe" },
+    { word: "Borborygmus", definition: "A rumbling stomach noise" },
+    { word: "Jouska", definition: "A hypothetical conversation you replay in your head" },
+    { word: "Philtrum", definition: "The groove between nose and upper lip" },
+    { word: "Erinaceous", definition: "Resembling a hedgehog" },
+    { word: "Abibliophobia", definition: "Fear of running out of reading material" },
+    { word: "Accismus", definition: "Pretending to be disinterested" },
+    { word: "Aglet", definition: "The plastic tip of a shoelace" },
+    { word: "Bibliosmia", definition: "The smell of old books" },
+    { word: "Bloviate", definition: "To talk pompously and at length" },
+    { word: "Cacography", definition: "Bad handwriting" },
+    { word: "Cattywampus", definition: "Crooked, askew" },
+    { word: "Chrysalism", definition: "Calm feeling indoors during a storm" },
+    { word: "Clinomania", definition: "Excessive desire to stay in bed" },
+    { word: "Coddiwomple", definition: "To travel toward a vague destination" },
+    { word: "Collywobbles", definition: "Butterflies in the stomach" },
+    { word: "Crapulence", definition: "Sickness from overeating or drinking" },
+    { word: "Crepuscular", definition: "Active at dawn and dusk" },
+    { word: "Defenestration", definition: "Throwing something out a window" },
+    { word: "Desiderium", definition: "Longing for something lost" },
+    { word: "Diaphanous", definition: "Light, delicate and translucent" },
+    { word: "Elflock", definition: "Tangled hair, as if by elves" },
+    { word: "Exiguous", definition: "Extremely small and meager" },
+    { word: "Finifugal", definition: "Hating endings" },
+    { word: "Floccinaucinihilipilification", definition: "The act of deeming something worthless" },
+    { word: "Formication", definition: "Sensation of ants crawling on skin" },
+    { word: "Fudgel", definition: "Pretending to work while doing nothing" },
+    { word: "Funambulist", definition: "A tightrope walker" },
+    { word: "Gardyloo", definition: "Warning shout before throwing waste from a window" },
+    { word: "Glabella", definition: "The space between your eyebrows" },
+    { word: "Griffonage", definition: "Careless handwriting" },
+    { word: "Groke", definition: "To stare at people eating, hoping to be invited" },
+    { word: "Halcyon", definition: "Denoting a happy golden time" },
+    { word: "Hiraeth", definition: "Homesickness for a place that no longer exists" },
+    { word: "Hobbledehoy", definition: "An awkward young man" },
+    { word: "Impignorate", definition: "To pawn or mortgage something" },
+    { word: "Inaniloquent", definition: "Talking foolishly" },
+    { word: "Inchoate", definition: "Just begun, not fully formed" },
+    { word: "Ineffable", definition: "Too great to describe in words" },
+    { word: "Kalopsia", definition: "Seeing things as more beautiful than they are" },
+    { word: "Kakistocracy", definition: "Government by the worst people" },
+    { word: "Lagniappe", definition: "A small free gift" },
+    { word: "Lalochezia", definition: "Relief felt from swearing" },
+    { word: "Lucubration", definition: "Studying late into the night" },
+    { word: "Meldrop", definition: "A drop of mucus at the tip of the nose" },
+    { word: "Mellifluous", definition: "Sweet-sounding" },
+    { word: "Merkin", definition: "A pubic wig" },
+    { word: "Mumpsimus", definition: "Clinging to a wrong belief" },
+    { word: "Nefelibata", definition: "One who lives in the clouds" },
+    { word: "Nurdle", definition: "A tiny plastic pellet" },
+    { word: "Obelus", definition: "The division sign ÷" },
+    { word: "Octothorpe", definition: "The # symbol" },
+    { word: "Omphalos", definition: "Navel, center of the world" },
+    { word: "Oxter", definition: "Armpit (Scots word)" },
+    { word: "Panglossian", definition: "Excessively optimistic" },
+    { word: "Paresthesia", definition: "Pins-and-needles tingling" },
+    { word: "Pauciloquent", definition: "Using few words" },
+    { word: "Pluviophile", definition: "A lover of rain" },
+    { word: "Pogonotrophy", definition: "The growing of a beard" },
+    { word: "Psithurism", definition: "The sound of wind in trees" },
+    { word: "Redamancy", definition: "Love returned in full" },
+    { word: "Sempiternal", definition: "Eternal and unchanging" },
+    { word: "Skedaddle", definition: "To run away quickly" },
+    { word: "Slumgullion", definition: "A cheap meat stew" },
+    { word: "Snickersnee", definition: "A knife fight" },
+    { word: "Stelliferous", definition: "Full of stars" },
+    { word: "Succedaneum", definition: "A substitute" },
+    { word: "Syzygy", definition: "Alignment of three celestial bodies" },
+    { word: "Tatterdemalion", definition: "A person in ragged clothes" },
+    { word: "Tintinnabulation", definition: "The ringing of bells" },
+    { word: "Tittle", definition: "The dot over i and j" },
+    { word: "Tmesis", definition: "Splitting a word with another word inside" },
+    { word: "Vellichor", definition: "Nostalgia felt in old bookshops" },
+    { word: "Yex", definition: "To hiccup or burp" },
+    { word: "Zephyr", definition: "A gentle breeze" },
+    { word: "Zyzzyva", definition: "A tropical weevil, last word in the dictionary" },
+    { word: "Dactylonomy", definition: "Counting on your fingers" },
+    { word: "Dendrochronology", definition: "Dating events by tree rings" },
+    { word: "Soprosyne", definition: "A healthy, balanced mind" },
+    { word: "Ulotrichous", definition: "Having woolly hair" },
+    { word: "Vermilion", definition: "A bright red pigment" },
+    { word: "Spaghettification", definition: "Stretching by a black hole's gravity" },
+    { word: "Lubber", definition: "A clumsy seaman" },
+    { word: "Runcible", definition: "A three-pronged fork (nonsense word)" },
+    { word: "Comeuppance", definition: "A deserved punishment" },
+    { word: "Bumbershoot", definition: "An umbrella" },
+    { word: "Bibble", definition: "To drink noisily" },
+    { word: "Flummox", definition: "To confuse" },
+    { word: "Mooncalf", definition: "A fool" },
+    { word: "Pettifogger", definition: "A petty, unscrupulous lawyer" },
+    { word: "Pratfall", definition: "A humiliating failure" },
+    { word: "Swivet", definition: "A nervous sweat" },
+    { word: "Smicker", definition: "An amorous glance" },
+    { word: "Mollycoddle", definition: "To pamper excessively" },
+    { word: "Callipygian", definition: "Having shapely buttocks" },
+    { word: "Ephemeral", definition: "Lasting a very short time" },
+    { word: "Finial", definition: "An ornament at the top of a spire" },
+    { word: "Inglenook", definition: "A cozy corner by a fireplace" },
+    { word: "Junto", definition: "A secret political group" },
+    { word: "Kex", definition: "A dry, hollow plant stem" },
+    { word: "Lache", definition: "A slothful person" },
+  ],
+  zh: [
+    { word: "耄耋", definition: "八九十岁的年纪" },
+    { word: "饕餮", definition: "贪吃的人，或传说中的凶兽" },
+    { word: "龃龉", definition: "意见不合，发生争执" },
+    { word: "踟蹰", definition: "犹豫不决，徘徊不前" },
+    { word: "魍魉", definition: "山川中的精怪" },
+    { word: "旖旎", definition: "柔美、婀娜多姿的样子" },
+    { word: "鳏寡", definition: "老而无妻无夫的人" },
+    { word: "叕", definition: "双又叠加，意为又、再" },
+    { word: "焱", definition: "火焰旺盛的样子" },
+    { word: "犄角", definition: "角落，或兽角" },
+    { word: "彳亍", definition: "慢慢走，徘徊" },
+    { word: "魑魅", definition: "传说中的山林鬼怪" },
+    { word: "耆老", definition: "年高德重的人" },
+    { word: "捯饬", definition: "打扮、收拾" },
+    { word: "咂摸", definition: "仔细品味、琢磨" },
+    { word: "熨帖", definition: "心里舒坦、妥帖" },
+    { word: "齉", definition: "鼻子不通气" },
+    { word: "曱甴", definition: "蟑螂（粤语说法）" },
+    { word: "猢狲", definition: "猴子，泛指猴类" },
+    { word: "蹀躞", definition: "小步行走的样子" },
+    { word: "耽搁", definition: "拖延、停留" },
+    { word: "邂逅", definition: "不期而遇" },
+    { word: "缱绻", definition: "情意深厚，难分难舍" },
+    { word: "霁月", definition: "雨后明朗的月亮" },
+    { word: "鹣鲽", definition: "比翼鸟，比喻恩爱夫妻" },
+    { word: "豆蔻", definition: "十三四岁的少女" },
+    { word: "及笄", definition: "女子十五岁成年礼" },
+    { word: "弱冠", definition: "男子二十岁成年" },
+    { word: "而立", definition: "三十岁" },
+    { word: "不惑", definition: "四十岁" },
+    { word: "知天命", definition: "五十岁" },
+    { word: "花甲", definition: "六十岁" },
+    { word: "古稀", definition: "七十岁" },
+    { word: "喜寿", definition: "七十七岁" },
+    { word: "伞寿", definition: "八十岁" },
+    { word: "米寿", definition: "八十八岁" },
+    { word: "卒寿", definition: "九十岁" },
+    { word: "白寿", definition: "九十九岁" },
+    { word: "茶寿", definition: "一百零八岁" },
+    { word: "獬豸", definition: "能辨曲直的传说神兽" },
+    { word: "貔貅", definition: "招财辟邪的神兽" },
+    { word: "赑屃", definition: "驮石碑的龟形龙子" },
+    { word: "螭吻", definition: "殿脊上的龙头大兽" },
+    { word: "蒲牢", definition: "爱鸣叫的龙子，钟上兽纽" },
+    { word: "狴犴", definition: "好诉讼的龙子，牢门装饰" },
+    { word: "睚眦", definition: "好杀斗的龙子，刀环装饰" },
+    { word: "嘲风", definition: "好冒险的龙子，殿角小兽" },
+    { word: "椒图", definition: "好闭守的龙子，门上铺首" },
+    { word: "虺", definition: "小蛇" },
+    { word: "蚺", definition: "大蟒蛇" },
+    { word: "蜃", definition: "大蛤蜊，吐气成海市蜃楼" },
+    { word: "埙", definition: "陶土吹奏乐器" },
+    { word: "笙", definition: "多管竹制簧乐器" },
+    { word: "篪", definition: "竹制管乐器" },
+    { word: "鼙鼓", definition: "军中战鼓" },
+    { word: "刁斗", definition: "军用铜锅，兼做报警器" },
+    { word: "斥候", definition: "侦察兵" },
+    { word: "烽燧", definition: "烽火台" },
+    { word: "阡陌", definition: "田间小路" },
+    { word: "菽粟", definition: "豆和谷，泛指粮食" },
+    { word: "黍稷", definition: "黄米和小米，泛指庄稼" },
+    { word: "醴", definition: "甜酒" },
+    { word: "觥筹", definition: "酒杯和筹码，指宴饮" },
+    { word: "脍炙", definition: "切细的肉和烤肉，比喻人人赞美" },
+    { word: "鳜鱼", definition: "淡水名贵鱼，桂鱼" },
+    { word: "雩", definition: "求雨的祭祀" },
+    { word: "禳", definition: "祈福消灾的仪式" },
+    { word: "傩", definition: "驱疫逐鬼的仪式" },
+    { word: "筮", definition: "用蓍草占卜" },
+    { word: "籀文", definition: "大篆，古代文字" },
+    { word: "冢", definition: "坟墓" },
+    { word: "陵寝", definition: "帝王的墓地" },
+    { word: "明器", definition: "陪葬用的器物" },
+    { word: "俑", definition: "陪葬的陶木人像" },
+    { word: "顿首", definition: "磕头，最重的敬礼" },
+    { word: "稽首", definition: "跪拜到地的大礼" },
+    { word: "叉手", definition: "古代拱手礼" },
+    { word: "袂", definition: "袖子" },
+    { word: "衿", definition: "衣领" },
+    { word: "笄", definition: "古代簪子" },
+    { word: "钏", definition: "手镯" },
+    { word: "步摇", definition: "戴在头上会晃动的饰物" },
+    { word: "花钿", definition: "贴在额头的花饰" },
+    { word: "傅粉", definition: "涂抹白粉化妆" },
+    { word: "箕踞", definition: "张开腿坐，形容不拘礼节" },
+    { word: "斋戒", definition: "祭祀前沐浴禁食" },
+    { word: "盥洗", definition: "洗手洗脸" },
+    { word: "栉沐", definition: "梳头洗头" },
+    { word: "蟾宫", definition: "月宫" },
+    { word: "桂魄", definition: "月亮的别称" },
+    { word: "衾枕", definition: "被褥枕头，借指夫妻" },
+    { word: "纶巾", definition: "古代文人头巾" },
+    { word: "鹤氅", definition: "用鹤羽做的大衣" },
+    { word: "缁衣", definition: "黑色僧衣" },
+    { word: "磬", definition: "古代石制乐器" },
+    { word: "醪", definition: "浊酒" },
+    { word: "飨", definition: "用酒食招待客人" },
+    { word: "混沌", definition: "传说中的凶兽之一" },
+    { word: "穷奇", definition: "传说中的凶兽" },
+    { word: "梼杌", definition: "传说中的凶兽" },
+    { word: "衙署", definition: "官府衙门" },
+    { word: "俸禄", definition: "官员的薪水" },
+    { word: "金文", definition: "青铜器上的铭文" },
+    { word: "隶书", definition: "汉代通行的书体" },
+    { word: "楷书", definition: "端正的正书" },
+    { word: "草书", definition: "潦草快速的书体" },
+    { word: "窀穸", definition: "墓穴" },
+    { word: "翁仲", definition: "墓前石人像" },
+    { word: "万福", definition: "古代女子行礼祝福语" },
+    { word: "佩", definition: "系在腰间的玉饰" },
+    { word: "璎珞", definition: "颈部珠宝饰物" },
+    { word: "黛", definition: "画眉的青黑色颜料" },
+    { word: "点绛", definition: "点口红" },
+    { word: "唱喏", definition: "宋代的揖礼" },
+    { word: "长揖", definition: "深深作揖" },
+    { word: "巾栉", definition: "毛巾和梳子，泛指服侍" },
+    { word: "木鱼", definition: "佛教敲击法器" },
+    { word: "饔飧", definition: "早晚饭，泛指饮食" },
+    { word: "觋", definition: "男巫" },
+    { word: "祓", definition: "除灾求福的仪式" },
   ],
 };
 const FINAL_GUESS_SECONDS = 30;
@@ -910,6 +1211,18 @@ export class GameRoom extends DurableObject<Env> {
       case "plSkip":
         await this.plSkip(ws);
         break;
+      case "bdDefine":
+        await this.bdDefine(ws, command.payload);
+        break;
+      case "bdVote":
+        await this.bdVote(ws, command.payload);
+        break;
+      case "bdSkip":
+        await this.bdSkip(ws);
+        break;
+      case "bdHint":
+        await this.bdHint(ws);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -1040,6 +1353,35 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "balderdash") {
+      const bd = state.balderdash;
+      if (!bd) return;
+      if (bd.sub === "define") {
+        if (this.bdTimeLeft(state) <= 0) {
+          this.bdStartVoting(state);
+          this.save(state);
+          await this.schedule(state);
+          this.broadcast(state);
+        } else {
+          await this.schedule(state);
+        }
+        return;
+      }
+      if (bd.sub === "vote") {
+        if (this.bdTimeLeft(state) <= 0) {
+          if (bd.revealed) this.bdAdvanceRound(state);
+          else this.bdResolveRound(state);
+          this.save(state);
+          await this.schedule(state);
+          this.broadcast(state);
+        } else {
+          await this.schedule(state);
+        }
+        return;
+      }
+      return;
+    }
+
     if (!state.round?.word) return;
 
     if (this.timeLeft(state) <= 0) {
@@ -1129,7 +1471,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "wavelength" ||
       payload.game === "fakeartist" ||
       payload.game === "telephone" ||
-      payload.game === "punchline"
+      payload.game === "punchline" ||
+      payload.game === "balderdash"
     ) {
       state.game = payload.game;
     }
@@ -1156,7 +1499,8 @@ export class GameRoom extends DurableObject<Env> {
             state.game === "wavelength" ||
             state.game === "fakeartist" ||
             state.game === "telephone" ||
-            state.game === "punchline"
+            state.game === "punchline" ||
+            state.game === "balderdash"
           ? 3
           : 2;
     if (state.players.length < minPlayers) {
@@ -1201,6 +1545,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "punchline") {
       await this.startPunchline(state);
+      return;
+    }
+
+    if (state.game === "balderdash") {
+      await this.startBalderdash(state);
       return;
     }
 
@@ -2000,6 +2349,275 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  // ---------- Balderdash (胡说八道) ----------
+  private bdConnectedPlayers(state: RoomState): string[] {
+    const bd = state.balderdash;
+    if (!bd) return [];
+    const connected = new Set(state.players.filter((p) => p.connected).map((p) => p.id));
+    return bd.order.filter((id) => connected.has(id));
+  }
+
+  private async startBalderdash(state: RoomState): Promise<void> {
+    const order = this.shuffleIds(state.players.map((p) => p.id));
+    const bank = BD_WORDS[state.lang];
+    const rounds = Math.min(BD_ROUNDS, bank.length);
+    const idx = this.shuffleIds(bank.map((_, i) => String(i))).slice(0, rounds);
+    const words = idx.map((s) => bank[Number(s)]);
+    state.balderdash = {
+      sub: "define",
+      order,
+      words,
+      round: 0,
+      totalRounds: words.length,
+      definitions: {},
+      submitted: {},
+      defineDeadline: Date.now() + BD_DEFINE_SECONDS * 1000,
+      displayOrder: [],
+      votes: {},
+      voteDeadline: 0,
+      revealed: false,
+      hintLevel: 0,
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? "胡说八道开始 — 给生僻词编一个靠谱的假解释，骗过所有人！"
+        : "Balderdash started — invent a believable fake definition!",
+    );
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async bdDefine(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const bd = state.balderdash;
+    if (!session || state.game !== "balderdash" || !bd || bd.sub !== "define") return;
+    if (bd.order.indexOf(session.playerId) < 0) return;
+    if (bd.submitted[session.playerId]) return;
+    const text = isRecord(payload) ? asText(payload.text, "", 140) : "";
+    if (!text) return;
+    bd.definitions[session.playerId] = text;
+    bd.submitted[session.playerId] = true;
+    const waiting = this.bdConnectedPlayers(state).filter((id) => !bd.submitted[id]);
+    if (waiting.length === 0) this.bdStartVoting(state);
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async bdSkip(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const bd = state.balderdash;
+    if (!this.isHost(ws, state) || !bd) return;
+    if (bd.sub === "define") this.bdStartVoting(state);
+    else if (bd.sub === "vote") {
+      if (bd.revealed) this.bdAdvanceRound(state);
+      else this.bdResolveRound(state);
+    } else return;
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async bdHint(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const bd = state.balderdash;
+    if (!this.isHost(ws, state) || !bd) return;
+    if (state.game !== "balderdash" || bd.sub !== "define") return;
+    if (bd.hintLevel >= 2) return;
+    bd.hintLevel += 1;
+    this.system(
+      state,
+      state.lang === "zh"
+        ? bd.hintLevel === 1
+          ? "房主给了个小提示 💡"
+          : "房主又给了个大提示 💡💡"
+        : bd.hintLevel === 1
+          ? "Host revealed a hint 💡"
+          : "Host revealed a bigger hint 💡💡",
+    );
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private bdHintText(state: RoomState): string | null {
+    const bd = state.balderdash;
+    if (!bd || bd.hintLevel <= 0 || bd.sub !== "define") return null;
+    const def = bd.words[bd.round]?.definition ?? "";
+    if (!def) return null;
+    const chars = Array.from(def);
+    // Level 1 = ~35%, Level 2 = ~65%, at least 1 char, always with ellipsis if truncated
+    const ratio = bd.hintLevel === 1 ? 0.35 : 0.65;
+    const n = Math.max(1, Math.ceil(chars.length * ratio));
+    if (n >= chars.length) return def;
+    return chars.slice(0, n).join("") + "…";
+  }
+
+  private bdStartVoting(state: RoomState): void {
+    const bd = state.balderdash;
+    if (!bd) return;
+    for (const id of bd.order) {
+      if (!bd.definitions[id]) bd.definitions[id] = state.lang === "zh" ? "(没作答)" : "(no definition)";
+    }
+    bd.displayOrder = this.shuffleIds([...bd.order, "__REAL__"]);
+    bd.sub = "vote";
+    bd.votes = {};
+    bd.revealed = false;
+    bd.voteDeadline = Date.now() + BD_VOTE_SECONDS * 1000;
+    this.system(state, state.lang === "zh" ? "投票开始 — 找出真正的解释！" : "Vote for the REAL definition!");
+  }
+
+  private bdEligibleVoters(state: RoomState): string[] {
+    return this.bdConnectedPlayers(state);
+  }
+
+  private async bdVote(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const bd = state.balderdash;
+    if (!session || state.game !== "balderdash" || !bd || bd.sub !== "vote" || bd.revealed) return;
+    if (bd.order.indexOf(session.playerId) < 0) return;
+    const choice = isRecord(payload) && typeof payload.choice === "number" ? Math.floor(payload.choice) : -1;
+    if (choice < 0 || choice >= bd.displayOrder.length) return;
+    // You CAN vote for your own here? No — classic: you know yours is fake, voting for it is wasted.
+    // Allow it but it gives no points; simpler: block self-vote to force engagement.
+    if (bd.displayOrder[choice] === session.playerId) return;
+    bd.votes[session.playerId] = choice;
+    const eligible = this.bdEligibleVoters(state);
+    if (eligible.length > 0 && eligible.every((id) => bd.votes[id] !== undefined)) this.bdResolveRound(state);
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private bdResolveRound(state: RoomState): void {
+    const bd = state.balderdash;
+    if (!bd || bd.revealed) return;
+    const counts = new Array<number>(bd.displayOrder.length).fill(0);
+    for (const choice of Object.values(bd.votes)) {
+      if (choice >= 0 && choice < counts.length) counts[choice] += 1;
+    }
+    const realIdx = bd.displayOrder.indexOf("__REAL__");
+    // Scoring: +100 for finding the truth, +50 per vote your fake received
+    bd.displayOrder.forEach((entry, i) => {
+      if (entry === "__REAL__") return;
+      const fooled = counts[i];
+      if (fooled > 0) this.bdAward(state, entry, fooled * 50);
+    });
+    for (const [voterId, choice] of Object.entries(bd.votes)) {
+      if (choice === realIdx) this.bdAward(state, voterId, 100);
+    }
+    bd.revealed = true;
+    bd.voteDeadline = Date.now() + BD_REVEAL_SECONDS * 1000;
+    const bestFakeVotes = Math.max(0, ...counts.filter((_, i) => i !== realIdx));
+    if (bestFakeVotes > 0) {
+      const idx = counts.findIndex((c, i) => i !== realIdx && c === bestFakeVotes);
+      const fid = bd.displayOrder[idx];
+      if (fid && fid !== "__REAL__") {
+        const name = this.playerName(state, fid);
+        this.system(state, state.lang === "zh" ? `${name} 的瞎编骗了 ${bestFakeVotes} 个人！` : `${name} fooled ${bestFakeVotes}!`);
+      }
+    }
+  }
+
+  private bdAdvanceRound(state: RoomState): void {
+    const bd = state.balderdash;
+    if (!bd) return;
+    bd.round += 1;
+    if (bd.round >= bd.totalRounds) {
+      bd.sub = "score";
+      bd.voteDeadline = 0;
+      this.system(state, state.lang === "zh" ? "全部揭晓 — 看看谁最会胡说八道！" : "That's a wrap — best bluffer wins!");
+      return;
+    }
+    bd.sub = "define";
+    bd.definitions = {};
+    bd.submitted = {};
+    bd.votes = {};
+    bd.displayOrder = [];
+    bd.revealed = false;
+    bd.hintLevel = 0;
+    bd.defineDeadline = Date.now() + BD_DEFINE_SECONDS * 1000;
+    this.system(state, state.lang === "zh" ? `第 ${bd.round + 1} 词 — 开始编！` : `Word ${bd.round + 1} — bluff!`);
+  }
+
+  private bdAward(state: RoomState, playerId: string, points: number): void {
+    if (points <= 0) return;
+    const p = state.players.find((x) => x.id === playerId);
+    if (p) {
+      p.score += points;
+      p.roundPoints = (p.roundPoints ?? 0) + points;
+    }
+  }
+
+  private bdTimeLeft(state: RoomState): number {
+    const bd = state.balderdash;
+    if (state.phase !== "playing" || state.game !== "balderdash" || !bd) return 0;
+    const dl = bd.sub === "define" ? bd.defineDeadline : bd.sub === "vote" ? bd.voteDeadline : 0;
+    if (!dl) return 0;
+    return Math.max(0, Math.ceil((dl - Date.now()) / 1000));
+  }
+
+  private bdView(state: RoomState, playerId?: string): BDView | null {
+    const bd = state.balderdash;
+    if (state.game !== "balderdash" || !bd) return null;
+    const isSpectator = !playerId || bd.order.indexOf(playerId) < 0;
+    const connected = this.bdConnectedPlayers(state);
+    let options: BDView["options"] = null;
+    if (bd.sub === "vote") {
+      const counts = new Array<number>(bd.displayOrder.length).fill(0);
+      if (bd.revealed) {
+        for (const c of Object.values(bd.votes)) if (c >= 0 && c < counts.length) counts[c] += 1;
+      }
+      const cur = bd.words[bd.round];
+      options = bd.displayOrder.map((entry, i) => {
+        const isRealEntry = entry === "__REAL__";
+        return {
+          text: isRealEntry ? (cur?.definition ?? "") : (bd.definitions[entry] ?? ""),
+          isMine: entry === playerId,
+          author: bd.revealed ? (isRealEntry ? (state.lang === "zh" ? "真·解释" : "TRUE") : this.playerName(state, entry)) : null,
+          votes: bd.revealed ? counts[i] : null,
+          isReal: bd.revealed ? isRealEntry : null,
+        };
+      });
+    }
+    let scores: BDView["scores"] = null;
+    if (bd.sub === "score") {
+      scores = [...state.players].sort((a, b) => b.score - a.score).map((p) => ({ name: p.name, score: p.score }));
+    }
+    let guessedReal: boolean | null = null;
+    if (bd.revealed && playerId) {
+      const myChoice = bd.votes[playerId];
+      if (myChoice !== undefined) guessedReal = bd.displayOrder[myChoice] === "__REAL__";
+    }
+    return {
+      sub: bd.sub,
+      round: bd.round,
+      totalRounds: bd.totalRounds,
+      word: bd.words[bd.round]?.word ?? "",
+      hasSubmitted: !!playerId && !!bd.submitted[playerId],
+      submittedCount: connected.filter((id) => bd.submitted[id]).length,
+      totalPlayers: connected.length,
+      defineDeadline: bd.defineDeadline,
+      isSpectator,
+      hint: this.bdHintText(state),
+      hintLevel: bd.hintLevel ?? 0,
+      options,
+      myVote: playerId && bd.votes[playerId] !== undefined ? bd.votes[playerId] : null,
+      hasVoted: !!playerId && bd.votes[playerId] !== undefined,
+      votedCount: Object.keys(bd.votes).length,
+      eligibleCount: this.bdEligibleVoters(state).length,
+      voteDeadline: bd.voteDeadline,
+      revealed: bd.revealed,
+      guessedReal,
+      scores,
+    };
+  }
+
   // ---------- Undercover (谁是卧底) ----------
   private shuffleIds(ids: string[]): string[] {
     const a = [...ids];
@@ -2503,6 +3121,7 @@ export class GameRoom extends DurableObject<Env> {
     state.fakeartist = null;
     state.telephone = null;
     state.punchline = null;
+    state.balderdash = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -2749,6 +3368,26 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // Balderdash: same locked-roster handling as Punchline
+    if (state.game === "balderdash" && state.balderdash && state.phase === "playing") {
+      const bd = state.balderdash;
+      delete bd.submitted[playerId];
+      delete bd.votes[playerId];
+      const connected = this.bdConnectedPlayers(state);
+      if (bd.sub === "define" && connected.length > 0 && connected.every((id) => bd.submitted[id])) {
+        this.bdStartVoting(state);
+      } else if (bd.sub === "vote" && !bd.revealed) {
+        const eligible = this.bdEligibleVoters(state);
+        if (eligible.length > 0 && eligible.every((id) => bd.votes[id] !== undefined)) {
+          this.bdResolveRound(state);
+        }
+      }
+      this.save(state);
+      await this.schedule(state);
+      this.broadcast(state);
+      return;
+    }
+
     if (wasPerformer && state.phase === "playing") {
       await this.endRound(state);
       return;
@@ -2905,6 +3544,24 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "balderdash") {
+      const bd = state.balderdash;
+      if (!bd) {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      if (bd.sub === "define") {
+        await this.ctx.storage.setAlarm(bd.defineDeadline);
+        return;
+      }
+      if (bd.sub === "vote" && bd.voteDeadline) {
+        await this.ctx.storage.setAlarm(bd.voteDeadline);
+        return;
+      }
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+
     if (!state.round?.word) {
       await this.ctx.storage.deleteAlarm();
       return;
@@ -3037,6 +3694,7 @@ export class GameRoom extends DurableObject<Env> {
       fakeartist: this.faView(state, playerId),
       telephone: this.tpView(state, playerId),
       punchline: this.plView(state, playerId),
+      balderdash: this.bdView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -3119,6 +3777,9 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).punchline === undefined) {
         parsed.punchline = null;
       }
+      if ((parsed as unknown as Record<string, unknown>).balderdash === undefined) {
+        parsed.balderdash = null;
+      }
       return parsed;
     } catch {
       const state = this.empty("ROOM");
@@ -3156,6 +3817,7 @@ export class GameRoom extends DurableObject<Env> {
       fakeartist: null,
       telephone: null,
       punchline: null,
+      balderdash: null,
       solved: 0,
       messages: [],
       strokes: [],

@@ -1,6 +1,6 @@
 # Game Night
 
-Party games for 2-6 friends — **eight** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
+Party games for 2-6 friends — **nine** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
 
 ## 🎮 Play it live
 
@@ -18,6 +18,7 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **Sketchy (滥竽充画)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
 - **Telephone (传声画筒)** — everyone writes a secret sentence, then chains rotate: draw what you got, caption the drawing you got, repeat. At the end every chain is replayed step-by-step so you can trace exactly where it drifted. 3+ players.
 - **Punchline (神回复)** — each round everyone answers the same silly prompt, then all answers appear anonymously and everyone votes for their favorite (not their own). Every vote is worth 100 points. 3+ players.
+- **Balderdash (胡说八道)** — obscure word, fake definitions. Everyone invents a believable definition, then votes for the REAL one. +100 for spotting truth, +50 per fool. Host can reveal hints. 3+ players.
 
 English or 中文 word banks, chosen when you create a room.
 

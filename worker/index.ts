@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -89,6 +89,7 @@ type RoomState = {
   wavelength: WVState | null;
   fakeartist: FAState | null;
   telephone: TPState | null;
+  punchline: PLState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -243,11 +244,57 @@ type TPView = {
   revealEntry: number;
 };
 
-type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone"> & {
+// Punchline (神回复): everyone fills in funny prompts, then the room votes head-to-head
+// on the funniest answer to each prompt. Each prompt is answered by two players who go
+// up against each other; everyone else votes. The funniest answers score the most.
+type PLState = {
+  sub: "answer" | "vote" | "score";
+  order: string[]; // fixed roster
+  prompts: string[]; // one shared prompt per round
+  round: number; // current round index (0-based)
+  totalRounds: number;
+  answers: Record<string, string>; // playerId -> answer for the current round
+  submitted: Record<string, boolean>; // player turned in this round's answer
+  answerDeadline: number; // epoch ms
+  answerOrder: string[]; // display order of answers this round (playerIds), shuffled so position doesn't leak identity
+  votes: Record<string, number>; // voterId -> index into answerOrder
+  voteDeadline: number; // epoch ms (voting window, then a short reveal window)
+  revealed: boolean; // this round's authors + counts are shown
+};
+
+// What one viewer sees. Everyone answers the same prompt; during voting all answers are
+// shown blind (authors hidden until the round is revealed), and you can't vote for your own.
+type PLView = {
+  sub: "answer" | "vote" | "score";
+  round: number;
+  totalRounds: number;
+  prompt: string;
+  hasSubmitted: boolean;
+  submittedCount: number;
+  totalPlayers: number;
+  answerDeadline: number;
+  isSpectator: boolean;
+  answers: Array<{
+    text: string;
+    isMine: boolean; // my own answer — I can't vote for it
+    author: string | null; // revealed only once the round resolves
+    votes: number | null; // revealed only once the round resolves
+  }> | null;
+  myVote: number | null; // index into answers
+  hasVoted: boolean;
+  votedCount: number;
+  eligibleCount: number;
+  voteDeadline: number;
+  revealed: boolean;
+  scores: Array<{ name: string; score: number }> | null;
+};
+
+type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline"> & {
   undercover: UCView | null;
   wavelength: WVView | null;
   fakeartist: FAView | null;
   telephone: TPView | null;
+  punchline: PLView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -262,6 +309,259 @@ const ROUND_SECONDS = 60;
 const HINT_COUNT_AT_SECONDS = 20; // reveal the word length after this long
 const HINT_CATEGORY_AT_SECONDS = 40; // reveal the category after this long
 const TURN_SECONDS = 12;
+const PL_ANSWER_SECONDS = 60; // time to answer the round's prompt
+const PL_VOTE_SECONDS = 25; // voting window per round
+const PL_REVEAL_SECONDS = 7; // how long the results are shown before advancing
+const PL_ROUNDS = 3; // number of prompts per game
+
+// Punchline prompts — open, silly fill-in-the-blanks. Everyone answers the same one each
+// round, so they're deliberately broad enough for lots of different funny answers.
+const PL_PROMPTS: Record<Lang, string[]> = {
+  en: [
+    "The worst possible name for a pet goldfish",
+    "A terrible thing to say to your boss on your first day",
+    "The real reason the dinosaurs went extinct",
+    "A rejected flavor of ice cream",
+    "The worst superpower to have",
+    "Something you should never say on a first date",
+    "A bad name for a boat",
+    "The secret ingredient in grandma's cooking",
+    "What aliens would find most confusing about humans",
+    "A terrible slogan for a hospital",
+    "The worst thing to find in your hotel room",
+    "A weird reason to be late for work",
+    "The most useless thing to bring to a deserted island",
+    "What your cat is really thinking right now",
+    "A bad name for a rock band",
+    "The worst gift for a five-year-old",
+    "A rejected Olympic sport",
+    "Something you don't want to hear from your dentist",
+    "The real reason the wifi is down",
+    "A terrible theme for a wedding",
+    "The worst topping to put on a pizza",
+    "A bad excuse for missing the meeting",
+    "The most embarrassing thing to shout in a quiet library",
+    "A terrible name for a new perfume",
+    "What you'd do with an extra pair of arms",
+    "The worst advice to give a new parent",
+    "A rejected ride at a theme park",
+    "Something a ghost would post online",
+    "The worst way to start a speech",
+    "A terrible new feature for a phone",
+    "A rejected superhero catchphrase",
+    "The worst thing to say during a job interview",
+    "A terrible name for a cruise ship",
+    "What your phone is secretly judging you for",
+    "The real reason your houseplants keep dying",
+    "A bad theme for a children's birthday party",
+    "The worst possible last words",
+    "Something you'd regret teaching a parrot to say",
+    "A rejected pizza chain slogan",
+    "The most useless magic spell",
+    "What dogs are really barking about",
+    "A terrible name for a nightclub",
+    "The worst thing to whisper during a wedding",
+    "A rejected reality TV show",
+    "The real reason the elevator is so slow",
+    "Something you should never put in the microwave",
+    "A bad name for a cologne",
+    "The worst way to quit your job",
+    "What the Wi-Fi router dreams about",
+    "A terrible mascot for a bank",
+    "The most awkward thing to bring to a potluck",
+    "A rejected flavor of toothpaste",
+    "The worst thing to find in your soup",
+    "Something a robot would lie about",
+    "A bad name for a racehorse",
+    "The real reason you're always tired",
+    "The worst superhero sidekick",
+    "A terrible thing to name your Wi-Fi network",
+    "What your smart speaker overhears the most",
+    "A rejected cereal mascot",
+    "The worst gift to regift",
+    "Something you should never say to a police officer",
+    "A bad name for a hair salon",
+    "The most useless item in a survival kit",
+    "The worst thing to say at a funeral",
+    "A rejected national holiday",
+    "What penguins gossip about",
+    "A terrible name for a burger joint",
+    "The real reason the meeting ran long",
+    "Something no one should ever deep-fry",
+    "A bad slogan for a dating app",
+    "The worst thing to keep in your fridge",
+    "A rejected Disney movie title",
+    "What your car would say if it could talk",
+    "The worst tattoo to get on your face",
+    "A terrible name for a yoga studio",
+    "The most embarrassing ringtone to go off in public",
+    "What aliens would steal from Earth first",
+    "A bad name for a spaceship",
+    "The worst way to end a text message",
+    "A rejected emoji",
+    "The worst thing to be famous for",
+    "A bad name for a coffee shop",
+    "What your fridge does when you're asleep",
+    "The real reason the cake is gone",
+    "A terrible superhero costume",
+    "Something you should never say to your barber",
+    "The worst holiday gift from your in-laws",
+    "A rejected amusement park mascot",
+    "The most useless app on your phone",
+    "What cats do when no one's home",
+    "A bad name for a gym",
+    "The worst thing to say to a bride",
+    "A rejected candy flavor",
+    "The real reason the printer never works",
+    "Something you'd find in a wizard's junk drawer",
+    "The worst pet to bring to work",
+    "A terrible name for a law firm",
+    "What your neighbors think you do all day",
+    "The worst way to answer the phone",
+    "A rejected motivational poster slogan",
+    "The most embarrassing thing to keep in your wallet",
+    "A bad name for a pizza topping",
+    "What ghosts complain about",
+    "The worst thing to build out of LEGO",
+    "A terrible new Olympic mascot",
+    "Something you should never bring on a plane",
+    "The real reason the vending machine ate your money",
+    "A bad name for a heavy metal band",
+    "The worst souvenir to bring home",
+    "What your dog thinks your job is",
+    "A rejected ice cream truck jingle",
+    "The worst thing to say to a doctor",
+    "A terrible name for a spa",
+    "What robots do on their day off",
+    "The most useless kitchen gadget",
+    "A bad slogan for an airline",
+    "The worst thing to microwave at the office",
+    "A rejected zoo attraction",
+    "The strangest thing to collect",
+  ],
+  zh: [
+    "给金鱼起的最烂的名字",
+    "上班第一天最不该对老板说的话",
+    "恐龙灭绝的真正原因",
+    "一款被否决的冰淇淋口味",
+    "最没用的超能力",
+    "第一次约会绝对不能说的话",
+    "给船起的烂名字",
+    "奶奶做菜的秘密配料",
+    "外星人最搞不懂人类的一点",
+    "医院最不该用的宣传标语",
+    "在酒店房间里最不想看到的东西",
+    "迟到的奇葩理由",
+    "带去荒岛最没用的东西",
+    "你家猫此刻其实在想什么",
+    "给乐队起的烂名字",
+    "送给五岁小孩最糟糕的礼物",
+    "一个被否决的奥运项目",
+    "最不想从牙医嘴里听到的话",
+    "网断了的真正原因",
+    "最糟糕的婚礼主题",
+    "披萨上最难吃的配料",
+    "翘会最烂的借口",
+    "在安静的图书馆里大喊出来最尴尬的一句话",
+    "给新香水起的烂名字",
+    "如果多出一双手你会用来干嘛",
+    "给新手爸妈最烂的建议",
+    "一个被否决的游乐园项目",
+    "鬼会发什么朋友圈",
+    "演讲最糟糕的开场白",
+    "手机最烂的新功能",
+    "一句被否决的超级英雄口头禅",
+    "面试时最不该说的话",
+    "给游轮起的烂名字",
+    "你的手机在偷偷嫌弃你什么",
+    "你养的植物老是死掉的真正原因",
+    "儿童生日派对最糟糕的主题",
+    "最烂的遗言",
+    "教鹦鹉说了会后悔的一句话",
+    "一句被否决的披萨店广告语",
+    "最没用的魔法咒语",
+    "狗其实在叫什么",
+    "给夜店起的烂名字",
+    "婚礼上最不该悄悄说的话",
+    "一个被否决的真人秀节目",
+    "电梯这么慢的真正原因",
+    "绝对不能放进微波炉的东西",
+    "给男士香水起的烂名字",
+    "最烂的辞职方式",
+    "路由器会做什么梦",
+    "银行最烂的吉祥物",
+    "带去聚餐最尴尬的一道菜",
+    "一款被否决的牙膏口味",
+    "在汤里最不想发现的东西",
+    "机器人会撒谎说的一件事",
+    "给赛马起的烂名字",
+    "你总是很累的真正原因",
+    "最烂的超级英雄搭档",
+    "给自家 Wi-Fi 起的烂名字",
+    "你的智能音箱最常偷听到什么",
+    "一个被否决的麦片吉祥物",
+    "最适合再转送出去的礼物",
+    "绝对不该对警察说的话",
+    "给理发店起的烂名字",
+    "求生包里最没用的东西",
+    "葬礼上最不该说的话",
+    "一个被否决的法定节日",
+    "企鹅之间会八卦什么",
+    "给汉堡店起的烂名字",
+    "会议超时的真正原因",
+    "绝对不该拿去油炸的东西",
+    "交友软件最烂的广告语",
+    "冰箱里最不该放的东西",
+    "一个被否决的迪士尼电影片名",
+    "如果你的车会说话它会说什么",
+    "最不该纹在脸上的纹身",
+    "给瑜伽馆起的烂名字",
+    "在公共场合突然响起最尴尬的手机铃声",
+    "外星人会最先从地球偷走什么",
+    "给宇宙飞船起的烂名字",
+    "最烂的短信结尾方式",
+    "一个被否决的表情符号",
+    "最不想因为什么而出名",
+    "给咖啡店起的烂名字",
+    "你睡着后冰箱在干什么",
+    "蛋糕不见了的真正原因",
+    "最烂的超级英雄服装",
+    "绝对不该对理发师说的话",
+    "公婆送的最糟糕的节日礼物",
+    "一个被否决的游乐园吉祥物",
+    "你手机上最没用的 App",
+    "家里没人时猫在干什么",
+    "给健身房起的烂名字",
+    "对新娘最不该说的话",
+    "一款被否决的糖果口味",
+    "打印机永远坏掉的真正原因",
+    "巫师杂物抽屉里会有什么",
+    "最不该带去上班的宠物",
+    "给律师事务所起的烂名字",
+    "邻居以为你整天在干什么",
+    "最烂的接电话方式",
+    "一句被否决的励志海报标语",
+    "钱包里放着最尴尬的东西",
+    "给披萨配料起的烂名字",
+    "鬼会抱怨什么",
+    "最不该用乐高拼出来的东西",
+    "一个糟糕的新奥运吉祥物",
+    "绝对不该带上飞机的东西",
+    "自动售货机吞了你钱的真正原因",
+    "给重金属乐队起的烂名字",
+    "最烂的旅行纪念品",
+    "你的狗以为你的工作是什么",
+    "一段被否决的冰淇淋车音乐",
+    "对医生最不该说的话",
+    "给水疗馆起的烂名字",
+    "机器人放假会干什么",
+    "最没用的厨房小工具",
+    "航空公司最烂的广告语",
+    "在公司微波炉里最不该热的东西",
+    "一个被否决的动物园景点",
+    "最奇怪的收藏爱好",
+  ],
+};
 const FINAL_GUESS_SECONDS = 30;
 const FA_TURN_SECONDS = 10;
 const FA_LAPS = 2;
@@ -601,6 +901,15 @@ export class GameRoom extends DurableObject<Env> {
       case "tpReveal":
         await this.tpReveal(ws, command.payload);
         break;
+      case "plAnswer":
+        await this.plAnswer(ws, command.payload);
+        break;
+      case "plVote":
+        await this.plVote(ws, command.payload);
+        break;
+      case "plSkip":
+        await this.plSkip(ws);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -702,6 +1011,35 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "punchline") {
+      const pl = state.punchline;
+      if (!pl) return;
+      if (pl.sub === "answer") {
+        if (this.plTimeLeft(state) <= 0) {
+          this.plStartVoting(state);
+          this.save(state);
+          await this.schedule(state);
+          this.broadcast(state);
+        } else {
+          await this.schedule(state);
+        }
+        return;
+      }
+      if (pl.sub === "vote") {
+        if (this.plTimeLeft(state) <= 0) {
+          if (pl.revealed) this.plAdvanceRound(state);
+          else this.plResolveRound(state);
+          this.save(state);
+          await this.schedule(state);
+          this.broadcast(state);
+        } else {
+          await this.schedule(state);
+        }
+        return;
+      }
+      return;
+    }
+
     if (!state.round?.word) return;
 
     if (this.timeLeft(state) <= 0) {
@@ -790,7 +1128,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "undercover" ||
       payload.game === "wavelength" ||
       payload.game === "fakeartist" ||
-      payload.game === "telephone"
+      payload.game === "telephone" ||
+      payload.game === "punchline"
     ) {
       state.game = payload.game;
     }
@@ -816,7 +1155,8 @@ export class GameRoom extends DurableObject<Env> {
         : state.game === "passthepen" ||
             state.game === "wavelength" ||
             state.game === "fakeartist" ||
-            state.game === "telephone"
+            state.game === "telephone" ||
+            state.game === "punchline"
           ? 3
           : 2;
     if (state.players.length < minPlayers) {
@@ -856,6 +1196,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "telephone") {
       this.startTelephone(state);
+      return;
+    }
+
+    if (state.game === "punchline") {
+      await this.startPunchline(state);
       return;
     }
 
@@ -1417,6 +1762,244 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  // ---------- Punchline (神回复) ----------
+  private plConnectedPlayers(state: RoomState): string[] {
+    const pl = state.punchline;
+    if (!pl) return [];
+    const connected = new Set(state.players.filter((p) => p.connected).map((p) => p.id));
+    return pl.order.filter((id) => connected.has(id));
+  }
+
+  private async startPunchline(state: RoomState): Promise<void> {
+    const order = this.shuffleIds(state.players.map((p) => p.id));
+    const bank = PL_PROMPTS[state.lang];
+    const rounds = Math.min(PL_ROUNDS, bank.length);
+    const prompts = this.shuffleIds(bank.map((_, i) => String(i)))
+      .slice(0, rounds)
+      .map((s) => bank[Number(s)]);
+    state.punchline = {
+      sub: "answer",
+      order,
+      prompts,
+      round: 0,
+      totalRounds: prompts.length,
+      answers: {},
+      submitted: {},
+      answerDeadline: Date.now() + PL_ANSWER_SECONDS * 1000,
+      answerOrder: [],
+      votes: {},
+      voteDeadline: 0,
+      revealed: false,
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? "神回复开始 — 大家回答同一个题目,越好笑越好!"
+        : "Punchline started — everyone answers the same prompt, the funnier the better!",
+    );
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async plAnswer(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const pl = state.punchline;
+    if (!session || state.game !== "punchline" || !pl || pl.sub !== "answer") return;
+    if (pl.order.indexOf(session.playerId) < 0) return; // spectators can't play
+    if (pl.submitted[session.playerId]) return;
+    const text = isRecord(payload) ? asText(payload.text, "", 120) : "";
+    if (!text) return;
+    pl.answers[session.playerId] = text;
+    pl.submitted[session.playerId] = true;
+
+    const waiting = this.plConnectedPlayers(state).filter((id) => !pl.submitted[id]);
+    if (waiting.length === 0) this.plStartVoting(state);
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async plSkip(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const pl = state.punchline;
+    if (!this.isHost(ws, state) || !pl) return;
+    if (pl.sub === "answer") {
+      this.plStartVoting(state);
+    } else if (pl.sub === "vote") {
+      if (pl.revealed) this.plAdvanceRound(state);
+      else this.plResolveRound(state);
+    } else {
+      return;
+    }
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private plStartVoting(state: RoomState): void {
+    const pl = state.punchline;
+    if (!pl) return;
+    // Fill placeholders for anyone who didn't answer, so every player has an entry.
+    for (const id of pl.order) {
+      if (!pl.answers[id]) pl.answers[id] = state.lang === "zh" ? "(没作答)" : "(no answer)";
+    }
+    // Shuffle display order so an answer's position doesn't reveal its author.
+    pl.answerOrder = this.shuffleIds(pl.order);
+    pl.sub = "vote";
+    pl.votes = {};
+    pl.revealed = false;
+    pl.voteDeadline = Date.now() + PL_VOTE_SECONDS * 1000;
+    this.system(state, state.lang === "zh" ? "投票开始 — 选出最好笑的回答(不能投自己)!" : "Voting time — pick the funniest (not your own)!");
+  }
+
+  // Everyone connected votes each round; the one exception handled at vote time is that
+  // you can't vote for your own answer.
+  private plEligibleVoters(state: RoomState): string[] {
+    return this.plConnectedPlayers(state);
+  }
+
+  private async plVote(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const pl = state.punchline;
+    if (!session || state.game !== "punchline" || !pl || pl.sub !== "vote" || pl.revealed) return;
+    if (pl.order.indexOf(session.playerId) < 0) return;
+    const choice = isRecord(payload) && typeof payload.choice === "number" ? Math.floor(payload.choice) : -1;
+    if (choice < 0 || choice >= pl.answerOrder.length) return;
+    if (pl.answerOrder[choice] === session.playerId) return; // can't vote for yourself
+    pl.votes[session.playerId] = choice;
+
+    const eligible = this.plEligibleVoters(state);
+    if (eligible.length > 0 && eligible.every((id) => pl.votes[id] !== undefined)) {
+      this.plResolveRound(state);
+    }
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private plResolveRound(state: RoomState): void {
+    const pl = state.punchline;
+    if (!pl || pl.revealed) return;
+    const counts = new Array<number>(pl.answerOrder.length).fill(0);
+    for (const choice of Object.values(pl.votes)) {
+      if (choice >= 0 && choice < counts.length) counts[choice] += 1;
+    }
+    // Each vote is worth 100 points to that answer's author.
+    pl.answerOrder.forEach((authorId, i) => this.plAward(state, authorId, counts[i] * 100));
+    pl.revealed = true;
+    // Hold on the reveal briefly so everyone sees who wrote what and who won.
+    pl.voteDeadline = Date.now() + PL_REVEAL_SECONDS * 1000;
+    let best = -1;
+    let bestId = "";
+    let tie = false;
+    counts.forEach((c, i) => {
+      if (c > best) {
+        best = c;
+        bestId = pl.answerOrder[i];
+        tie = false;
+      } else if (c === best) {
+        tie = true;
+      }
+    });
+    if (best > 0 && !tie) {
+      const name = this.playerName(state, bestId);
+      this.system(state, state.lang === "zh" ? `${name} 拿下这一轮!` : `${name} wins this round!`);
+    }
+  }
+
+  private plAdvanceRound(state: RoomState): void {
+    const pl = state.punchline;
+    if (!pl) return;
+    pl.round += 1;
+    if (pl.round >= pl.totalRounds) {
+      pl.sub = "score";
+      pl.voteDeadline = 0;
+      this.system(state, state.lang === "zh" ? "全部揭晓 — 看看谁的回答最神!" : "That's a wrap — see who had the best comebacks!");
+      return;
+    }
+    pl.sub = "answer";
+    pl.answers = {};
+    pl.submitted = {};
+    pl.votes = {};
+    pl.answerOrder = [];
+    pl.revealed = false;
+    pl.answerDeadline = Date.now() + PL_ANSWER_SECONDS * 1000;
+    this.system(
+      state,
+      state.lang === "zh" ? `第 ${pl.round + 1} 题 — 大家开始作答!` : `Prompt ${pl.round + 1} — everyone answer!`,
+    );
+  }
+
+  private plAward(state: RoomState, playerId: string, points: number): void {
+    if (points <= 0) return;
+    const player = state.players.find((p) => p.id === playerId);
+    if (player) {
+      player.score += points;
+      player.roundPoints = (player.roundPoints ?? 0) + points;
+    }
+  }
+
+  private plTimeLeft(state: RoomState): number {
+    const pl = state.punchline;
+    if (state.phase !== "playing" || state.game !== "punchline" || !pl) return 0;
+    const deadline = pl.sub === "answer" ? pl.answerDeadline : pl.sub === "vote" ? pl.voteDeadline : 0;
+    if (!deadline) return 0;
+    return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  }
+
+  private plView(state: RoomState, playerId?: string): PLView | null {
+    const pl = state.punchline;
+    if (state.game !== "punchline" || !pl) return null;
+    const isSpectator = !playerId || pl.order.indexOf(playerId) < 0;
+    const connected = this.plConnectedPlayers(state);
+
+    let answers: PLView["answers"] = null;
+    if (pl.sub === "vote") {
+      const counts = new Array<number>(pl.answerOrder.length).fill(0);
+      if (pl.revealed) {
+        for (const choice of Object.values(pl.votes)) {
+          if (choice >= 0 && choice < counts.length) counts[choice] += 1;
+        }
+      }
+      answers = pl.answerOrder.map((authorId, i) => ({
+        text: pl.answers[authorId] ?? "",
+        isMine: authorId === playerId,
+        author: pl.revealed ? this.playerName(state, authorId) : null,
+        votes: pl.revealed ? counts[i] : null,
+      }));
+    }
+
+    let scores: PLView["scores"] = null;
+    if (pl.sub === "score") {
+      scores = [...state.players].sort((a, b) => b.score - a.score).map((p) => ({ name: p.name, score: p.score }));
+    }
+
+    return {
+      sub: pl.sub,
+      round: pl.round,
+      totalRounds: pl.totalRounds,
+      prompt: pl.prompts[pl.round] ?? "",
+      hasSubmitted: !!playerId && !!pl.submitted[playerId],
+      submittedCount: connected.filter((id) => pl.submitted[id]).length,
+      totalPlayers: connected.length,
+      answerDeadline: pl.answerDeadline,
+      isSpectator,
+      answers,
+      myVote: playerId && pl.votes[playerId] !== undefined ? pl.votes[playerId] : null,
+      hasVoted: !!playerId && pl.votes[playerId] !== undefined,
+      votedCount: Object.keys(pl.votes).length,
+      eligibleCount: this.plEligibleVoters(state).length,
+      voteDeadline: pl.voteDeadline,
+      revealed: pl.revealed,
+      scores,
+    };
+  }
+
   // ---------- Undercover (谁是卧底) ----------
   private shuffleIds(ids: string[]): string[] {
     const a = [...ids];
@@ -1919,6 +2502,7 @@ export class GameRoom extends DurableObject<Env> {
     state.wavelength = null;
     state.fakeartist = null;
     state.telephone = null;
+    state.punchline = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -2144,6 +2728,27 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // Punchline: roster is locked; keep the leaver's slot (their answers auto-fill)
+    // and just unblock whatever answer or vote is in progress.
+    if (state.game === "punchline" && state.punchline && state.phase === "playing") {
+      const pl = state.punchline;
+      delete pl.submitted[playerId];
+      delete pl.votes[playerId];
+      const connected = this.plConnectedPlayers(state);
+      if (pl.sub === "answer" && connected.length > 0 && connected.every((id) => pl.submitted[id])) {
+        this.plStartVoting(state);
+      } else if (pl.sub === "vote" && !pl.revealed) {
+        const eligible = this.plEligibleVoters(state);
+        if (eligible.length > 0 && eligible.every((id) => pl.votes[id] !== undefined)) {
+          this.plResolveRound(state);
+        }
+      }
+      this.save(state);
+      await this.schedule(state);
+      this.broadcast(state);
+      return;
+    }
+
     if (wasPerformer && state.phase === "playing") {
       await this.endRound(state);
       return;
@@ -2282,6 +2887,24 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "punchline") {
+      const pl = state.punchline;
+      if (!pl) {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      if (pl.sub === "answer") {
+        await this.ctx.storage.setAlarm(pl.answerDeadline);
+        return;
+      }
+      if (pl.sub === "vote" && pl.voteDeadline) {
+        await this.ctx.storage.setAlarm(pl.voteDeadline);
+        return;
+      }
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+
     if (!state.round?.word) {
       await this.ctx.storage.deleteAlarm();
       return;
@@ -2413,6 +3036,7 @@ export class GameRoom extends DurableObject<Env> {
       wavelength: this.wvView(state, playerId),
       fakeartist: this.faView(state, playerId),
       telephone: this.tpView(state, playerId),
+      punchline: this.plView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -2492,6 +3116,9 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).telephone === undefined) {
         parsed.telephone = null;
       }
+      if ((parsed as unknown as Record<string, unknown>).punchline === undefined) {
+        parsed.punchline = null;
+      }
       return parsed;
     } catch {
       const state = this.empty("ROOM");
@@ -2528,6 +3155,7 @@ export class GameRoom extends DurableObject<Env> {
       wavelength: null,
       fakeartist: null,
       telephone: null,
+      punchline: null,
       solved: 0,
       messages: [],
       strokes: [],

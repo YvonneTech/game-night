@@ -26,7 +26,8 @@ English or 中文 word banks, chosen when you create a room.
 
 - **Cloudflare Workers + Durable Objects** — one Durable Object per room holds authoritative game state and fans out updates over WebSockets; empty rooms auto-recycle.
 - **React + Vite + TypeScript** single-page client, served as static assets by the Worker.
-- Real-time sync, per-viewer hidden info (secret words/roles), reconnect, and invite links — no accounts, no database to run.
+- Real-time sync, per-viewer hidden info (secret words/roles), and invite links — no accounts, no database to run.
+- Each room stores a private reconnect token in the browser, so reopening the invite link restores the same player and host role. Disconnected seats have a short grace period; fully empty rooms expire after 10 minutes and delete their Durable Object storage.
 
 ## Run
 

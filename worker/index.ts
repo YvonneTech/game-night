@@ -17,7 +17,11 @@ type Player = {
   guessed: boolean;
   roundPoints: number;
   guessRank?: number;
+  resumeTokenHash: string;
+  disconnectedAt?: number;
 };
+
+type PublicPlayer = Omit<Player, "resumeTokenHash" | "disconnectedAt">;
 
 type Stroke = {
   color: string;
@@ -338,7 +342,8 @@ type BDView = {
   scores: Array<{ name: string; score: number }> | null;
 };
 
-type Snapshot = Omit<RoomState, "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash"> & {
+type Snapshot = Omit<RoomState, "players" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash"> & {
+  players: PublicPlayer[];
   undercover: UCView | null;
   wavelength: WVView | null;
   fakeartist: FAView | null;
@@ -869,6 +874,8 @@ const FA_LAPS = 2;
 const MAX_PLAYERS = 6;
 const MAX_MESSAGES = 100;
 const SCORE_BY_RANK = [100, 80, 60, 40, 20];
+const HOST_TRANSFER_GRACE_MS = 60 * 1000;
+const PLAYER_RECONNECT_GRACE_MS = 2 * 60 * 1000;
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // recycle a room 10 min after everyone leaves
 
 type WordBank = { en: Record<string, string[]>; zh: Record<string, string[]> };
@@ -1024,6 +1031,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function randomToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function tokenHashesMatch(actual: string, expected: string): boolean {
+  const decode = (value: string): Uint8Array => {
+    if (!/^[0-9a-f]{64}$/.test(value)) return new Uint8Array(32);
+    return Uint8Array.from(value.match(/.{2}/g) ?? [], (part) => Number.parseInt(part, 16));
+  };
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual(a: ArrayBuffer | ArrayBufferView, b: ArrayBuffer | ArrayBufferView): boolean;
+  };
+  return subtle.timingSafeEqual(decode(actual), decode(expected));
+}
+
 function asText(value: unknown, fallback: string, maxLength: number): string {
   if (typeof value !== "string") return fallback;
   const text = value.trim();
@@ -1090,16 +1119,16 @@ export class GameRoom extends DurableObject<Env> {
       const session = this.readSession(ws);
       if (session) this.sessions.set(ws, session);
     }
+  }
 
-    this.ctx.blockConcurrencyWhile(async () => {
-      this.ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS state (
-          id TEXT PRIMARY KEY,
-          body TEXT NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-      `);
-    });
+  private ensureSchema(): void {
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS state (
+        id TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -1123,6 +1152,15 @@ export class GameRoom extends DurableObject<Env> {
       command = { type: parsed.type, payload: parsed.payload };
     } catch {
       this.error(ws, "Invalid message.");
+      return;
+    }
+
+    if (command.type !== "join" && !this.session(ws)) {
+      this.error(ws, "Join the room first.");
+      return;
+    }
+    if (command.type === "join" && this.session(ws)) {
+      this.error(ws, "Already joined.");
       return;
     }
 
@@ -1241,30 +1279,11 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    const session = this.session(ws);
-    this.sessions.delete(ws);
-    if (!session) return;
-
-    const state = this.load();
-    const player = state.players.find((item) => item.id === session.playerId);
-    if (!player) return;
-    player.connected = false;
-    this.system(state, `${player.name} disconnected`);
-
-    if (!state.players.some((item) => item.connected)) {
-      // Everyone's gone — arm the auto-recycle timer instead of leaving state behind.
-      state.emptyAt = Date.now();
-      this.save(state);
-      await this.ctx.storage.setAlarm(state.emptyAt + EMPTY_ROOM_TTL_MS);
-      return;
-    }
-
-    this.save(state);
-    this.broadcast(state);
+    await this.disconnect(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    this.sessions.delete(ws);
+    await this.disconnect(ws);
     try {
       ws.close(1011, "socket error");
     } catch {
@@ -1274,18 +1293,48 @@ export class GameRoom extends DurableObject<Env> {
 
   async alarm(): Promise<void> {
     const state = this.load();
+    const now = Date.now();
 
-    // Auto-recycle: if nobody is connected, wipe once the grace period passes.
+    // Keep the entire room available for reconnection while everybody is away.
     if (this.ctx.getWebSockets().length === 0) {
-      if (state.emptyAt && Date.now() - state.emptyAt >= EMPTY_ROOM_TTL_MS) {
-        this.save(this.empty(state.code));
-        await this.ctx.storage.deleteAlarm();
+      if (state.emptyAt && now - state.emptyAt >= EMPTY_ROOM_TTL_MS) {
+        await this.purgeRoom();
         return;
       }
-      const emptyAt = state.emptyAt || Date.now();
+      const emptyAt = state.emptyAt || now;
       state.emptyAt = emptyAt;
       this.save(state);
-      await this.ctx.storage.setAlarm(emptyAt + EMPTY_ROOM_TTL_MS);
+      await this.schedule(state);
+      return;
+    }
+
+    if (state.emptyAt) {
+      state.emptyAt = 0;
+      this.save(state);
+    }
+
+    const disconnectedHost = state.players.find(
+      (player) => player.host && !player.connected && player.disconnectedAt,
+    );
+    if (
+      disconnectedHost?.disconnectedAt &&
+      now - disconnectedHost.disconnectedAt >= HOST_TRANSFER_GRACE_MS
+    ) {
+      disconnectedHost.host = false;
+      this.ensureHost(state);
+      const nextHost = state.players.find((player) => player.host);
+      if (nextHost) this.system(state, `${nextHost.name} is now the host`);
+      this.save(state);
+      await this.schedule(state);
+      this.broadcast(state);
+      return;
+    }
+
+    const expiredPlayer = state.players.find(
+      (player) => !player.connected && player.disconnectedAt && now - player.disconnectedAt >= PLAYER_RECONNECT_GRACE_MS,
+    );
+    if (expiredPlayer) {
+      await this.removePlayer(state, expiredPlayer.id, "did not reconnect");
       return;
     }
 
@@ -1294,17 +1343,25 @@ export class GameRoom extends DurableObject<Env> {
       if (state.phase === "teams") {
         state.phase = "playing";
         this.save(state);
-        await this.ctx.storage.deleteAlarm();
+        await this.schedule(state);
         this.broadcast(state);
+      } else {
+        await this.schedule(state);
       }
       return;
     }
 
-    if (state.phase !== "playing") return;
+    if (state.phase !== "playing") {
+      await this.schedule(state);
+      return;
+    }
 
     if (state.game === "passthepen") {
       const round = state.round;
-      if (!round?.turnStartedAt) return;
+      if (!round?.turnStartedAt) {
+        await this.schedule(state);
+        return;
+      }
       if (this.turnTimeLeft(state) <= 0) {
         await this.advanceTurn(state);
       } else {
@@ -1315,7 +1372,10 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "fakeartist") {
       const fa = state.fakeartist;
-      if (!fa || fa.sub !== "draw") return;
+      if (!fa || fa.sub !== "draw") {
+        await this.schedule(state);
+        return;
+      }
       if (this.faTurnTimeLeft(state) <= 0) {
         await this.faAdvanceTurn(state);
       } else {
@@ -1326,7 +1386,10 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "punchline") {
       const pl = state.punchline;
-      if (!pl) return;
+      if (!pl) {
+        await this.schedule(state);
+        return;
+      }
       if (pl.sub === "answer") {
         if (this.plTimeLeft(state) <= 0) {
           this.plStartVoting(state);
@@ -1350,12 +1413,16 @@ export class GameRoom extends DurableObject<Env> {
         }
         return;
       }
+      await this.schedule(state);
       return;
     }
 
     if (state.game === "balderdash") {
       const bd = state.balderdash;
-      if (!bd) return;
+      if (!bd) {
+        await this.schedule(state);
+        return;
+      }
       if (bd.sub === "define") {
         if (this.bdTimeLeft(state) <= 0) {
           this.bdStartVoting(state);
@@ -1379,10 +1446,14 @@ export class GameRoom extends DurableObject<Env> {
         }
         return;
       }
+      await this.schedule(state);
       return;
     }
 
-    if (!state.round?.word) return;
+    if (!state.round?.word) {
+      await this.schedule(state);
+      return;
+    }
 
     if (this.timeLeft(state) <= 0) {
       await this.endRound(state);
@@ -1403,25 +1474,38 @@ export class GameRoom extends DurableObject<Env> {
     if (!create && state.createdAt === 0) {
       this.error(ws, "Room not found.");
       ws.close(1008, "room not found");
+      await this.purgeRoom();
       return;
     }
 
-    const playerId = asText(payload.player.id, crypto.randomUUID(), 80);
+    if (create && state.createdAt !== 0) {
+      this.error(ws, "Room code is already in use. Please try again.");
+      ws.close(1008, "room exists");
+      return;
+    }
+
     const name = asText(payload.player.name, "Player", 18);
     const color = asColor(payload.player.color);
-    const session = { playerId };
-    this.sessions.set(ws, session);
-    ws.serializeAttachment(session);
+    const suppliedToken = typeof payload.reconnectToken === "string" ? payload.reconnectToken.trim().toLowerCase() : "";
+    const suppliedHash = /^[0-9a-f]{64}$/.test(suppliedToken) ? await hashToken(suppliedToken) : "";
+    let existing = suppliedHash
+      ? state.players.find(
+          (player) => !!player.resumeTokenHash && tokenHashesMatch(suppliedHash, player.resumeTokenHash),
+        )
+      : undefined;
+    let reconnectToken = suppliedToken;
 
-    const existing = state.players.find((player) => player.id === playerId);
-    if (existing) {
-      existing.name = name;
-      existing.color = color;
-      existing.connected = true;
-      this.system(state, `${name} rejoined`);
-    } else {
+    // One-release migration path for rooms created by the old client, which only
+    // knew a tab-scoped player ID and had no reconnect token.
+    if (!existing && !suppliedToken) {
+      const legacyId = asText(payload.player.id, "", 80);
+      existing = state.players.find((player) => player.id === legacyId && !player.resumeTokenHash);
+    }
+
+    let playerId = existing?.id ?? "";
+    if (!existing) {
       if (state.phase !== "lobby") {
-        this.error(ws, "Game already started.");
+        this.error(ws, suppliedToken ? "Your reconnect session has expired." : "Game already started.");
         ws.close(1008, "started");
         return;
       }
@@ -1430,6 +1514,25 @@ export class GameRoom extends DurableObject<Env> {
         ws.close(1008, "full");
         return;
       }
+      playerId = crypto.randomUUID();
+      reconnectToken = randomToken();
+    } else if (!reconnectToken) {
+      reconnectToken = randomToken();
+    }
+
+    const session = { playerId };
+    this.replacePlayerSocket(playerId, ws);
+    this.sessions.set(ws, session);
+    ws.serializeAttachment(session);
+
+    if (existing) {
+      existing.name = name;
+      existing.color = color;
+      existing.connected = true;
+      existing.resumeTokenHash = await hashToken(reconnectToken);
+      delete existing.disconnectedAt;
+      this.system(state, `${name} rejoined`);
+    } else {
       if (state.createdAt === 0) state.createdAt = Date.now();
       // The creator (first player) picks the room's language.
       if (state.players.length === 0 && (payload.lang === "en" || payload.lang === "zh")) {
@@ -1444,6 +1547,7 @@ export class GameRoom extends DurableObject<Env> {
         connected: true,
         guessed: false,
         roundPoints: 0,
+        resumeTokenHash: await hashToken(reconnectToken),
       });
       this.system(state, `${name} joined`);
     }
@@ -1451,12 +1555,9 @@ export class GameRoom extends DurableObject<Env> {
     state.emptyAt = 0;
     this.ensureHost(state);
     this.save(state);
+    this.send(ws, { type: "session", payload: { playerId, reconnectToken } });
     this.broadcast(state);
-    if (state.phase === "playing") {
-      await this.schedule(state);
-    } else if (state.phase === "teams" && state.yarn) {
-      await this.ctx.storage.setAlarm(state.yarn.startsAt);
-    }
+    await this.schedule(state);
   }
 
   private async settings(ws: WebSocket, payload: unknown): Promise<void> {
@@ -1773,7 +1874,7 @@ export class GameRoom extends DurableObject<Env> {
       fa.candidates = [];
       this.system(state, state.lang === "zh" ? "作画结束 — 投票选出假画家!" : "Drawing done — vote for the fake artist!");
       this.save(state);
-      await this.ctx.storage.deleteAlarm();
+      await this.schedule(state);
       this.broadcast(state);
       return;
     }
@@ -1884,7 +1985,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!this.isHost(ws, state) || !fa || fa.sub !== "reveal") return;
     state.phase = "gameEnd";
     this.save(state);
-    await this.ctx.storage.deleteAlarm();
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -2865,7 +2966,7 @@ export class GameRoom extends DurableObject<Env> {
     state.yarn = { startsAt: Date.now() + YARN_COUNTDOWN_MS, durationSeconds: YARN_DURATION_SECONDS, teams };
     this.system(state, "Teams drawn — kick off in 3…");
     this.save(state);
-    await this.ctx.storage.setAlarm(state.yarn.startsAt);
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -2892,7 +2993,7 @@ export class GameRoom extends DurableObject<Env> {
     state.phase = "choosing";
     this.system(state, `Round ${number} started`);
     this.save(state);
-    await this.ctx.storage.deleteAlarm();
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -3132,13 +3233,15 @@ export class GameRoom extends DurableObject<Env> {
       guessRank: undefined,
     }));
     this.save(state);
-    await this.ctx.storage.deleteAlarm();
+    await this.schedule(state);
     this.broadcast(state);
   }
 
   private async leave(ws: WebSocket): Promise<void> {
     const session = this.session(ws);
     if (!session) return;
+    this.sessions.delete(ws);
+    ws.serializeAttachment(null);
     const state = this.load();
     await this.removePlayer(state, session.playerId);
     try {
@@ -3166,18 +3269,21 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  private async removePlayer(state: RoomState, playerId: string): Promise<void> {
+  private async removePlayer(state: RoomState, playerId: string, reason = "left"): Promise<void> {
     const player = state.players.find((item) => item.id === playerId);
     if (!player) return;
     const wasPerformer = state.round?.performerId === playerId;
+    const wasHost = player.host;
     state.players = state.players.filter((item) => item.id !== playerId);
-    this.system(state, `${player.name} left`);
+    this.system(state, `${player.name} ${reason}`);
     this.ensureHost(state);
+    if (wasHost) {
+      const nextHost = state.players.find((item) => item.host);
+      if (nextHost) this.system(state, `${nextHost.name} is now the host`);
+    }
 
     if (state.players.length === 0) {
-      const empty = this.empty(state.code);
-      this.save(empty);
-      await this.ctx.storage.deleteAlarm();
+      await this.purgeRoom();
       return;
     }
 
@@ -3218,6 +3324,7 @@ export class GameRoom extends DurableObject<Env> {
         uc.sub = "reveal";
         state.phase = "gameEnd";
         this.save(state);
+        await this.schedule(state);
         this.broadcast(state);
         return;
       }
@@ -3241,6 +3348,7 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
       this.save(state);
+      await this.schedule(state);
       this.broadcast(state);
       return;
     }
@@ -3253,6 +3361,7 @@ export class GameRoom extends DurableObject<Env> {
       if (state.players.length < 2) {
         state.phase = "gameEnd";
         this.save(state);
+        await this.schedule(state);
         this.broadcast(state);
         return;
       }
@@ -3265,6 +3374,7 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
       this.save(state);
+      await this.schedule(state);
       this.broadcast(state);
       return;
     }
@@ -3289,6 +3399,7 @@ export class GameRoom extends DurableObject<Env> {
         state.phase = "gameEnd";
         fa.result = "civ";
         this.save(state);
+        await this.schedule(state);
         this.broadcast(state);
         return;
       }
@@ -3318,10 +3429,12 @@ export class GameRoom extends DurableObject<Env> {
           this.faResolveVotes(state);
         }
         this.save(state);
+        await this.schedule(state);
         this.broadcast(state);
         return;
       }
       this.save(state);
+      await this.schedule(state);
       this.broadcast(state);
       return;
     }
@@ -3343,6 +3456,7 @@ export class GameRoom extends DurableObject<Env> {
         this.tpAdvance(state);
       }
       this.save(state);
+      await this.schedule(state);
       this.broadcast(state);
       return;
     }
@@ -3400,6 +3514,7 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     this.save(state);
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -3409,7 +3524,7 @@ export class GameRoom extends DurableObject<Env> {
     state.round.ended = true;
     this.system(state, `Answer: ${state.round.word}`);
     this.save(state);
-    await this.ctx.storage.deleteAlarm();
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -3419,7 +3534,7 @@ export class GameRoom extends DurableObject<Env> {
     const names = state.players.filter((player) => player.score === score).map((player) => player.name);
     this.system(state, `${names.join(" & ")} win`);
     this.save(state);
-    await this.ctx.storage.deleteAlarm();
+    await this.schedule(state);
     this.broadcast(state);
   }
 
@@ -3501,80 +3616,71 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async schedule(state: RoomState): Promise<void> {
-    if (state.phase !== "playing") {
+    const deadlines: number[] = [];
+
+    if (state.emptyAt) {
+      deadlines.push(state.emptyAt + EMPTY_ROOM_TTL_MS);
+    } else {
+      for (const player of state.players) {
+        if (!player.connected && player.disconnectedAt) {
+          deadlines.push(player.disconnectedAt + PLAYER_RECONNECT_GRACE_MS);
+          if (player.host) deadlines.push(player.disconnectedAt + HOST_TRANSFER_GRACE_MS);
+        }
+      }
+
+      const gameDeadline = this.gameDeadline(state);
+      if (gameDeadline !== null) deadlines.push(gameDeadline);
+    }
+
+    if (deadlines.length === 0) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
 
+    await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, Math.min(...deadlines)));
+  }
+
+  private gameDeadline(state: RoomState): number | null {
+    if (state.phase === "teams" && state.game === "yarnpals" && state.yarn) {
+      return state.yarn.startsAt;
+    }
+    if (state.phase !== "playing") return null;
+
     if (state.game === "passthepen") {
       const round = state.round;
-      if (!round?.turnStartedAt) {
-        await this.ctx.storage.deleteAlarm();
-        return;
-      }
-      await this.ctx.storage.setAlarm(round.turnStartedAt + (round.turnSeconds ?? TURN_SECONDS) * 1000);
-      return;
+      return round?.turnStartedAt
+        ? round.turnStartedAt + (round.turnSeconds ?? TURN_SECONDS) * 1000
+        : null;
     }
 
     if (state.game === "fakeartist") {
       const fa = state.fakeartist;
-      if (!fa || fa.sub !== "draw") {
-        await this.ctx.storage.deleteAlarm();
-        return;
-      }
-      await this.ctx.storage.setAlarm(fa.turnStartedAt + fa.turnSeconds * 1000);
-      return;
+      return fa?.sub === "draw" ? fa.turnStartedAt + fa.turnSeconds * 1000 : null;
     }
 
     if (state.game === "punchline") {
       const pl = state.punchline;
-      if (!pl) {
-        await this.ctx.storage.deleteAlarm();
-        return;
-      }
-      if (pl.sub === "answer") {
-        await this.ctx.storage.setAlarm(pl.answerDeadline);
-        return;
-      }
-      if (pl.sub === "vote" && pl.voteDeadline) {
-        await this.ctx.storage.setAlarm(pl.voteDeadline);
-        return;
-      }
-      await this.ctx.storage.deleteAlarm();
-      return;
+      if (pl?.sub === "answer") return pl.answerDeadline;
+      if (pl?.sub === "vote" && pl.voteDeadline) return pl.voteDeadline;
+      return null;
     }
 
     if (state.game === "balderdash") {
       const bd = state.balderdash;
-      if (!bd) {
-        await this.ctx.storage.deleteAlarm();
-        return;
-      }
-      if (bd.sub === "define") {
-        await this.ctx.storage.setAlarm(bd.defineDeadline);
-        return;
-      }
-      if (bd.sub === "vote" && bd.voteDeadline) {
-        await this.ctx.storage.setAlarm(bd.voteDeadline);
-        return;
-      }
-      await this.ctx.storage.deleteAlarm();
-      return;
+      if (bd?.sub === "define") return bd.defineDeadline;
+      if (bd?.sub === "vote" && bd.voteDeadline) return bd.voteDeadline;
+      return null;
     }
 
-    if (!state.round?.word) {
-      await this.ctx.storage.deleteAlarm();
-      return;
-    }
+    if (!state.round?.word) return null;
     const started = state.round.startedAt;
     const now = Date.now();
     const end = started + state.round.durationSeconds * 1000;
     const countAt = started + HINT_COUNT_AT_SECONDS * 1000;
     const categoryAt = started + HINT_CATEGORY_AT_SECONDS * 1000;
-    let next = end;
-    if (now < countAt) next = Math.min(next, countAt);
-    else if (now < categoryAt) next = Math.min(next, categoryAt);
-    await this.ctx.storage.setAlarm(next);
+    if (now < countAt) return Math.min(end, countAt);
+    if (now < categoryAt) return Math.min(end, categoryAt);
+    return end;
   }
 
   private broadcast(state: RoomState): void {
@@ -3632,6 +3738,8 @@ export class GameRoom extends DurableObject<Env> {
 
   private snapshot(state: RoomState, playerId?: string): Snapshot {
     const round = state.round ? { ...state.round } : null;
+    const players: PublicPlayer[] = state.players.map(({ resumeTokenHash: _token, disconnectedAt: _disconnected, ...player }) => player);
+    const { players: _players, ...publicState } = state;
     const isPerformer = !!round && round.performerId === playerId;
     let seeWord = false;
     let youDraw = false;
@@ -3687,7 +3795,8 @@ export class GameRoom extends DurableObject<Env> {
     // Fake artist doesn't use Round but we provide dummy for UI consistency
     // Ensure strokes remain visible for all during FA
     return {
-      ...state,
+      ...publicState,
+      players,
       round,
       undercover: this.ucView(state, playerId),
       wavelength: this.wvView(state, playerId),
@@ -3757,6 +3866,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private load(): RoomState {
+    this.ensureSchema();
     const row = this.ctx.storage.sql
       .exec<{ body: string }>("SELECT body FROM state WHERE id = ?", "room")
       .toArray()[0];
@@ -3780,6 +3890,10 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).balderdash === undefined) {
         parsed.balderdash = null;
       }
+      parsed.players = parsed.players.map((player) => ({
+        ...player,
+        resumeTokenHash: typeof player.resumeTokenHash === "string" ? player.resumeTokenHash : "",
+      }));
       return parsed;
     } catch {
       const state = this.empty("ROOM");
@@ -3789,6 +3903,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private save(state: RoomState): void {
+    this.ensureSchema();
     state.updatedAt = Date.now();
     this.ctx.storage.sql.exec(
       `INSERT INTO state (id, body, updated_at)
@@ -3842,7 +3957,8 @@ export class GameRoom extends DurableObject<Env> {
 
   private ensureHost(state: RoomState): void {
     if (state.players.some((player) => player.host)) return;
-    if (state.players[0]) state.players[0].host = true;
+    const nextHost = state.players.find((player) => player.connected) ?? state.players[0];
+    if (nextHost) nextHost.host = true;
   }
 
   private isHost(ws: WebSocket, state: RoomState): boolean {
@@ -3883,6 +3999,47 @@ export class GameRoom extends DurableObject<Env> {
 
   private messages(state: RoomState, message: Message): void {
     state.messages = [...state.messages, message].slice(-MAX_MESSAGES);
+  }
+
+  private replacePlayerSocket(playerId: string, replacement: WebSocket): void {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === replacement || this.session(socket)?.playerId !== playerId) continue;
+      this.sessions.delete(socket);
+      socket.serializeAttachment(null);
+      try {
+        socket.close(4000, "reconnected elsewhere");
+      } catch {
+        // The old socket may already be closed.
+      }
+    }
+  }
+
+  private async disconnect(ws: WebSocket): Promise<void> {
+    const session = this.session(ws);
+    this.sessions.delete(ws);
+    ws.serializeAttachment(null);
+    if (!session || this.socketFor(session.playerId)) return;
+
+    const state = this.load();
+    const player = state.players.find((item) => item.id === session.playerId);
+    if (!player || !player.connected) return;
+
+    player.connected = false;
+    player.disconnectedAt = Date.now();
+    this.system(state, `${player.name} disconnected`);
+
+    if (!state.players.some((item) => item.connected)) {
+      state.emptyAt = Date.now();
+    }
+
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private async purgeRoom(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
   }
 
   private session(ws: WebSocket): Session | undefined {

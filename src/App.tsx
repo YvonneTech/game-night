@@ -103,6 +103,7 @@ type Snapshot = {
 };
 
 type ServerMessage =
+  | { type: "session"; payload: { playerId: string; reconnectToken: string } }
   | { type: "state"; payload: Snapshot }
   | { type: "error"; payload: { message: string } }
   | { type: "kicked"; payload: { message: string } };
@@ -116,6 +117,9 @@ type Notice = {
 
 const COLORS = ["#4f7cff", "#e0576f", "#18a67d", "#f4c542", "#8b6be8", "#ef7d33"];
 const ROOM_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const AUTO_RECONNECT_MS = 60_000;
+
+type RoomSession = { playerId: string; reconnectToken: string };
 
 const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
   en: {
@@ -232,12 +236,51 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
   },
 };
 
-function playerId(): string {
-  const existing = sessionStorage.getItem("fresh_game_player_id");
-  if (existing) return existing;
-  const next = crypto.randomUUID();
-  sessionStorage.setItem("fresh_game_player_id", next);
-  return next;
+function roomSessionKey(code: string): string {
+  return `game-night:session:${code}`;
+}
+
+function readRoomSession(code: string): RoomSession | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(roomSessionKey(code)) ?? "null") as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "playerId" in parsed &&
+      "reconnectToken" in parsed &&
+      typeof parsed.playerId === "string" &&
+      typeof parsed.reconnectToken === "string" &&
+      /^[0-9a-f]{64}$/.test(parsed.reconnectToken)
+    ) {
+      return { playerId: parsed.playerId, reconnectToken: parsed.reconnectToken };
+    }
+  } catch {
+    // Storage can be unavailable or contain stale data.
+  }
+  return null;
+}
+
+function saveRoomSession(code: string, session: RoomSession): void {
+  try {
+    localStorage.setItem(roomSessionKey(code), JSON.stringify(session));
+  } catch {
+    // The current tab can still play even if persistent storage is unavailable.
+  }
+}
+
+function clearRoomSession(code: string): void {
+  try {
+    localStorage.removeItem(roomSessionKey(code));
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function setRoomInUrl(code: string): void {
+  const url = new URL(window.location.href);
+  if (code) url.searchParams.set("room", code);
+  else url.searchParams.delete("room");
+  window.history.replaceState(null, "", url);
 }
 
 function roomCode(): string {
@@ -257,7 +300,7 @@ function socketBase(): string {
 function parseMessage(value: string): ServerMessage | null {
   try {
     const parsed = JSON.parse(value) as ServerMessage;
-    return parsed.type === "state" || parsed.type === "error" || parsed.type === "kicked" ? parsed : null;
+    return parsed.type === "session" || parsed.type === "state" || parsed.type === "error" || parsed.type === "kicked" ? parsed : null;
   } catch {
     return null;
   }
@@ -284,7 +327,7 @@ function messageClass(message: Message): string {
 }
 
 export default function App() {
-  const [id] = useState(playerId);
+  const [id, setId] = useState("");
   const [name, setName] = useState(() => localStorage.getItem("fresh_game_name") ?? "");
   const [color, setColor] = useState(() => localStorage.getItem("fresh_game_color") ?? COLORS[0]);
   const [lang, setLang] = useState<"en" | "zh">(() => (localStorage.getItem("fresh_game_lang") === "zh" ? "zh" : "en"));
@@ -306,6 +349,13 @@ export default function App() {
   const [teamCountdown, setTeamCountdown] = useState(3);
   const wsRef = useRef<WebSocket | null>(null);
   const closingRef = useRef(false);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectStartedAtRef = useRef(0);
+  const reconnectAttemptRef = useRef(0);
+  const connectRef = useRef<((code: string, create: boolean, preserveState?: boolean) => void) | null>(null);
+  const roomSessionsRef = useRef<Record<string, RoomSession>>({});
+  const autoJoinStartedRef = useRef(false);
+  const wasDisconnectedRef = useRef(false);
   const chatRef = useRef<HTMLDivElement | null>(null);
   const noticeIdRef = useRef(0);
   const yarnNetRef = useRef<((msg: { type: "yarnWorld" | "yarnInput"; payload: any }) => void) | null>(null);
@@ -367,7 +417,7 @@ export default function App() {
   );
 
   const connect = useCallback(
-    (code: string, create: boolean) => {
+    (code: string, create: boolean, preserveState = false) => {
       const cleanName = name.trim();
       const cleanCode = code.trim().toUpperCase();
       if (!cleanName) {
@@ -379,27 +429,49 @@ export default function App() {
         return;
       }
 
-      localStorage.setItem("fresh_game_name", cleanName);
-      localStorage.setItem("fresh_game_color", color);
-      localStorage.setItem("fresh_game_lang", lang);
+      try {
+        localStorage.setItem("fresh_game_name", cleanName);
+        localStorage.setItem("fresh_game_color", color);
+        localStorage.setItem("fresh_game_lang", lang);
+      } catch {
+        // Playing still works for this tab; only cross-tab recovery is unavailable.
+      }
+
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+
+      const savedSession = create ? null : (roomSessionsRef.current[cleanCode] ?? readRoomSession(cleanCode));
+      setId(savedSession?.playerId ?? "");
       closingRef.current = true;
-      wsRef.current?.close();
+      const previousSocket = wsRef.current;
+      wsRef.current = null;
+      previousSocket?.close();
       closingRef.current = false;
 
       const socket = new WebSocket(`${socketBase()}/room/${cleanCode}/ws`);
+      let joined = false;
       wsRef.current = socket;
       setStatus("connecting");
-      clearNotice();
+      if (!preserveState) clearNotice();
       setRoom(cleanCode);
-      setPhase("lobby");
-      setSnapshot(null);
+      setRoomInUrl(cleanCode);
+      if (!preserveState) {
+        setPhase("lobby");
+        setSnapshot(null);
+      }
 
       socket.addEventListener("open", () => {
-        setStatus("connected");
         socket.send(
           JSON.stringify({
             type: "join",
-            payload: { create, lang, player: { id, name: cleanName, color } },
+            payload: {
+              create,
+              lang,
+              reconnectToken: savedSession?.reconnectToken,
+              player: { id: savedSession?.playerId ?? "", name: cleanName, color },
+            },
           }),
         );
       });
@@ -419,14 +491,50 @@ export default function App() {
         }
         const message = parseMessage(event.data);
         if (!message) return;
+        if (message.type === "session") {
+          joined = true;
+          const nextSession = {
+            playerId: message.payload.playerId,
+            reconnectToken: message.payload.reconnectToken,
+          };
+          roomSessionsRef.current[cleanCode] = nextSession;
+          saveRoomSession(cleanCode, nextSession);
+          setId(nextSession.playerId);
+          setStatus("connected");
+          reconnectStartedAtRef.current = 0;
+          reconnectAttemptRef.current = 0;
+          if (wasDisconnectedRef.current) {
+            wasDisconnectedRef.current = false;
+            showNotice("Reconnected — you're back in the game", "success", 3500);
+          }
+          return;
+        }
         if (message.type === "error") {
+          if (message.payload.message === "Room not found." || message.payload.message === "Your reconnect session has expired.") {
+            clearRoomSession(cleanCode);
+            delete roomSessionsRef.current[cleanCode];
+            setId("");
+          }
           showNotice(message.payload.message);
+          if (!joined) {
+            closingRef.current = true;
+            if (wsRef.current === socket) wsRef.current = null;
+            socket.close();
+            setSnapshot(null);
+            setRoom("");
+            setPhase("landing");
+            setStatus("idle");
+          }
           return;
         }
         if (message.type === "kicked") {
           closingRef.current = true;
-          socket.close();
           if (wsRef.current === socket) wsRef.current = null;
+          socket.close();
+          clearRoomSession(cleanCode);
+          delete roomSessionsRef.current[cleanCode];
+          setRoomInUrl("");
+          setId("");
           showNotice(message.payload.message);
           setSnapshot(null);
           setRoom("");
@@ -434,30 +542,72 @@ export default function App() {
           setStatus("idle");
           return;
         }
+        setStatus("connected");
+        reconnectStartedAtRef.current = 0;
+        reconnectAttemptRef.current = 0;
         setSnapshot(message.payload);
         setPhase(message.payload.phase);
         setTimeLeft(message.payload.timeLeft);
       });
 
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         if (wsRef.current !== socket) return;
         wsRef.current = null;
-        setStatus(closingRef.current ? "idle" : "closed");
+        if (closingRef.current) {
+          setStatus("idle");
+          return;
+        }
+
+        setStatus("closed");
+        if (event.code === 1000 || event.code === 1008 || event.code === 4000) {
+          if (event.code === 4000) showNotice("This player reconnected in another tab.");
+          return;
+        }
+
+        wasDisconnectedRef.current = true;
+        if (!reconnectStartedAtRef.current) reconnectStartedAtRef.current = Date.now();
+        if (Date.now() - reconnectStartedAtRef.current >= AUTO_RECONNECT_MS) {
+          showNotice("Automatic reconnect timed out — tap Reconnect to try again.");
+          return;
+        }
+
+        const delay = Math.min(10_000, 1000 * 2 ** reconnectAttemptRef.current);
+        reconnectAttemptRef.current += 1;
+        setStatus("connecting");
+        showNotice("Connection lost — reconnecting…");
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null;
+          connectRef.current?.(cleanCode, false, true);
+        }, delay);
       });
 
       socket.addEventListener("error", () => {
-        showNotice("Could not connect to the room server");
+        // The close event owns retry behavior and user-facing status.
       });
     },
-    [clearNotice, color, id, lang, name, showNotice],
+    [clearNotice, color, lang, name, showNotice],
   );
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     return () => {
       closingRef.current = true;
-      wsRef.current?.close();
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      autoJoinStartedRef.current = false;
+      const socket = wsRef.current;
+      wsRef.current = null;
+      socket?.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (autoJoinStartedRef.current || !joinCode || !name.trim() || !readRoomSession(joinCode)) return;
+    autoJoinStartedRef.current = true;
+    connect(joinCode, false);
+  }, [connect, joinCode, name]);
 
   useEffect(() => {
     if (phase !== "playing" || !round?.startedAt) {
@@ -510,10 +660,14 @@ export default function App() {
   }, [notice]);
 
   function createRoom() {
+    reconnectStartedAtRef.current = 0;
+    reconnectAttemptRef.current = 0;
     connect(roomCode(), true);
   }
 
   function joinRoom() {
+    reconnectStartedAtRef.current = 0;
+    reconnectAttemptRef.current = 0;
     connect(joinCode, false);
   }
 
@@ -527,14 +681,27 @@ export default function App() {
   }
 
   function reconnect() {
-    if (room) connect(room, false);
+    if (!room) return;
+    reconnectStartedAtRef.current = Date.now();
+    reconnectAttemptRef.current = 0;
+    wasDisconnectedRef.current = true;
+    connect(room, false, true);
   }
 
   function leaveRoom() {
     closingRef.current = true;
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     send("leave");
-    wsRef.current?.close();
+    const socket = wsRef.current;
     wsRef.current = null;
+    socket?.close();
+    if (room) clearRoomSession(room);
+    if (room) delete roomSessionsRef.current[room];
+    setRoomInUrl("");
+    setId("");
     setSnapshot(null);
     setRoom("");
     setPhase("landing");
@@ -1341,7 +1508,7 @@ function PlayerList({
               {player.host ? " · host" : ""}
             </strong>
             <small>
-              {player.guessed ? `rank ${player.guessRank}` : player.connected ? "connected" : "offline"} · {player.score}
+              {player.guessed ? `rank ${player.guessRank}` : player.connected ? "connected" : "reconnecting"} · {player.score}
             </small>
           </div>
           {host && player.id !== myId && onKick && (

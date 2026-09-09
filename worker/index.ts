@@ -99,6 +99,8 @@ type RoomState = {
   messages: Message[];
   strokes: Stroke[];
   emptyAt: number;
+  telephoneInspirationCursor: number;
+  telephoneInspirationOffset: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -228,6 +230,7 @@ type TPState = {
   order: string[]; // fixed roster; chain i is owned by order[i]
   chains: TPChain[];
   submitted: Record<string, boolean>; // who has submitted for the current step
+  inspirationByPlayer: Record<string, number>;
   revealChain: number; // host-driven walkthrough position
   revealEntry: number;
 };
@@ -244,10 +247,15 @@ type TPView = {
   isSpectator: boolean;
   submittedCount: number;
   totalPlayers: number;
+  inspirationIndex: number | null;
   reveal: TPChain[] | null;
   revealChain: number;
   revealEntry: number;
 };
+
+// Keep in sync with the three 18-item inspiration lists in TelephoneGame.tsx.
+const TP_INSPIRATION_COUNT = 18 * 18 * 18;
+const TP_INSPIRATION_STEP = 1871; // Coprime with 5,832, so every index appears exactly once.
 
 // Punchline (神回复): everyone fills in funny prompts, then the room votes head-to-head
 // on the funniest answer to each prompt. Each prompt is answered by two players who go
@@ -342,7 +350,18 @@ type BDView = {
   scores: Array<{ name: string; score: number }> | null;
 };
 
-type Snapshot = Omit<RoomState, "players" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash"> & {
+type Snapshot = Omit<
+  RoomState,
+  | "players"
+  | "undercover"
+  | "wavelength"
+  | "fakeartist"
+  | "telephone"
+  | "punchline"
+  | "balderdash"
+  | "telephoneInspirationCursor"
+  | "telephoneInspirationOffset"
+> & {
   players: PublicPlayer[];
   undercover: UCView | null;
   wavelength: WVView | null;
@@ -1259,8 +1278,8 @@ export class GameRoom extends DurableObject<Env> {
       case "tpDraw":
         await this.tpSubmit(ws, "draw", command.payload);
         break;
-      case "tpSkip":
-        await this.tpSkip(ws);
+      case "tpInspire":
+        this.tpInspire(ws);
         break;
       case "tpReveal":
         await this.tpReveal(ws, command.payload);
@@ -2087,6 +2106,7 @@ export class GameRoom extends DurableObject<Env> {
         entries: [],
       })),
       submitted: {},
+      inspirationByPlayer: {},
       revealChain: 0,
       revealEntry: 0,
     };
@@ -2145,11 +2165,27 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast(state);
   }
 
-  private async tpSkip(ws: WebSocket): Promise<void> {
+  private tpInspire(ws: WebSocket): void {
+    const session = this.session(ws);
     const state = this.load();
     const tp = state.telephone;
-    if (!this.isHost(ws, state) || !tp || (tp.sub !== "write" && tp.sub !== "play")) return;
-    this.tpAdvance(state);
+    if (!session || state.game !== "telephone" || !tp || tp.step !== 0 || tp.sub !== "write") return;
+    if (!tp.order.includes(session.playerId) || tp.submitted[session.playerId]) return;
+
+    const cursor = state.telephoneInspirationCursor ?? 0;
+    if (cursor >= TP_INSPIRATION_COUNT) {
+      this.error(ws, "No more unique inspirations are available.");
+      return;
+    }
+
+    let offset = state.telephoneInspirationOffset;
+    if (!Number.isInteger(offset) || offset < 0 || offset >= TP_INSPIRATION_COUNT) {
+      offset = crypto.getRandomValues(new Uint32Array(1))[0] % TP_INSPIRATION_COUNT;
+      state.telephoneInspirationOffset = offset;
+    }
+    const inspirationIndex = (offset + cursor * TP_INSPIRATION_STEP) % TP_INSPIRATION_COUNT;
+    state.telephoneInspirationCursor = cursor + 1;
+    tp.inspirationByPlayer = { ...(tp.inspirationByPlayer ?? {}), [session.playerId]: inspirationIndex };
     this.save(state);
     this.broadcast(state);
   }
@@ -2231,6 +2267,8 @@ export class GameRoom extends DurableObject<Env> {
       isSpectator,
       submittedCount: connected.filter((id) => tp.submitted[id]).length,
       totalPlayers: connected.length,
+      inspirationIndex:
+        !revealing && tp.step === 0 && playerId ? (tp.inspirationByPlayer?.[playerId] ?? null) : null,
       reveal: revealing ? tp.chains : null,
       revealChain: tp.revealChain,
       revealEntry: tp.revealEntry,
@@ -3764,7 +3802,12 @@ export class GameRoom extends DurableObject<Env> {
   private snapshot(state: RoomState, playerId?: string): Snapshot {
     const round = state.round ? { ...state.round } : null;
     const players: PublicPlayer[] = state.players.map(({ resumeTokenHash: _token, disconnectedAt: _disconnected, ...player }) => player);
-    const { players: _players, ...publicState } = state;
+    const {
+      players: _players,
+      telephoneInspirationCursor: _telephoneInspirationCursor,
+      telephoneInspirationOffset: _telephoneInspirationOffset,
+      ...publicState
+    } = state;
     const isPerformer = !!round && round.performerId === playerId;
     let seeWord = false;
     let youDraw = false;
@@ -3962,6 +4005,8 @@ export class GameRoom extends DurableObject<Env> {
       messages: [],
       strokes: [],
       emptyAt: 0,
+      telephoneInspirationCursor: 0,
+      telephoneInspirationOffset: crypto.getRandomValues(new Uint32Array(1))[0] % TP_INSPIRATION_COUNT,
       createdAt: 0,
       updatedAt: now,
     };

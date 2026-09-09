@@ -373,6 +373,8 @@ export default function App() {
   const players = snapshot?.players ?? [];
   const me = players.find((player) => player.id === id);
   const host = !!me?.host;
+  const uiLang = snapshot?.lang ?? lang;
+  const zh = uiLang === "zh";
   const hostOnlySettings = "Only the host can change the game settings.";
   const game = snapshot?.game ?? "classic";
   const round = snapshot?.round ?? null;
@@ -391,6 +393,8 @@ export default function App() {
         : 2;
   const hasJoinCode = joinCode.trim().length > 0;
   const openedFromInviteLink = inviteEntryCode.length > 0;
+  const canChooseLanguage =
+    (phase === "landing" && !openedFromInviteLink) || (phase === "lobby" && host && status === "connected");
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
     [players],
@@ -426,6 +430,16 @@ export default function App() {
     },
     [send, snapshot],
   );
+
+  function changeLanguage(nextLang: "en" | "zh") {
+    setLang(nextLang);
+    try {
+      localStorage.setItem("fresh_game_lang", nextLang);
+    } catch {
+      // The language still changes for this tab when persistent storage is unavailable.
+    }
+    if (phase === "lobby" && snapshot && host) changeSettings({ lang: nextLang });
+  }
 
   const connect = useCallback(
     (code: string, create: boolean, preserveState = false) => {
@@ -764,26 +778,40 @@ export default function App() {
             <span>Party games for 2-6 friends</span>
           </div>
         </div>
-        {room && (
-          <div className="room-strip">
-            <span className={`status ${status}`}>{status}</span>
-            <div className="room-code-compact" aria-label={`Room code ${room}`}>
-              <span>Room code</span>
-              <strong>{room}</strong>
-            </div>
-            {status === "closed" && (
-              <button className="primary small" onClick={reconnect}>
-                Reconnect
+        <div className="topbar-actions">
+          {canChooseLanguage && (
+            <button
+              className="secondary small language-toggle"
+              aria-label={zh ? "Switch to English" : "切换为中文"}
+              aria-pressed={zh}
+              onClick={() => changeLanguage(zh ? "en" : "zh")}
+            >
+              <span className={zh ? "active" : ""}>中</span>
+              <span aria-hidden="true">/</span>
+              <span className={zh ? "" : "active"}>EN</span>
+            </button>
+          )}
+          {room && (
+            <div className="room-strip">
+              <span className={`status ${status}`}>{status}</span>
+              <div className="room-code-compact" aria-label={`Room code ${room}`}>
+                <span>Room code</span>
+                <strong>{room}</strong>
+              </div>
+              {status === "closed" && (
+                <button className="primary small" onClick={reconnect}>
+                  Reconnect
+                </button>
+              )}
+              <button className="secondary small" onClick={copyInviteLink}>
+                Invite
               </button>
-            )}
-            <button className="secondary small" onClick={copyInviteLink}>
-              Invite
-            </button>
-            <button className="secondary small" onClick={leaveRoom}>
-              Leave
-            </button>
-          </div>
-        )}
+              <button className="secondary small" onClick={leaveRoom}>
+                Leave
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       {notice && (
@@ -835,20 +863,6 @@ export default function App() {
               <span className="you-dot" style={{ background: color }}>{initial(name)}</span>
               <span>{name.trim() || "That's you"}</span>
             </div>
-
-            {!hasJoinCode && (
-              <div className="field">
-                <span className="field-label">Game language</span>
-                <div className="chips">
-                  <button className={lang === "en" ? "chip active" : "chip"} onClick={() => setLang("en")}>
-                    English
-                  </button>
-                  <button className={lang === "zh" ? "chip active" : "chip"} onClick={() => setLang("zh")}>
-                    中文
-                  </button>
-                </div>
-              </div>
-            )}
 
             {!openedFromInviteLink && (
               <>
@@ -903,7 +917,7 @@ export default function App() {
               <>
                 <p className="eyebrow">Disconnected</p>
                 <h1>Connection lost</h1>
-                <p className="muted">Rejoin room {room} with the same name to pick up where you left off.</p>
+                <p className="muted">Rejoin room {room} to pick up where you left off.</p>
                 <div className="gate-actions">
                   <button className="primary" onClick={reconnect}>
                     Reconnect

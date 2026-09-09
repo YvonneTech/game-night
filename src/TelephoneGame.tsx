@@ -27,6 +27,7 @@ export type TPView = {
   isSpectator: boolean;
   submittedCount: number;
   totalPlayers: number;
+  inspirationIndex: number | null;
   reveal: TPChain[] | null;
   revealChain: number;
   revealEntry: number;
@@ -40,64 +41,52 @@ type Props = {
   send: (type: string, payload?: unknown) => void;
 };
 
-// A few playful seeds so nobody stares at a blank box.
-const SEED_IDEAS: Record<"en" | "zh", string[]> = {
-  en: [
-    "a cat president signing a law",
-    "grandma winning a skateboard contest",
-    "a robot afraid of the rain",
-    "two penguins arguing over pizza",
-    "a dragon who only eats salad",
-    "an astronaut who forgot the moon",
-    "a shark trying to blow out birthday candles",
-    "a wizard stuck in a revolving door",
-    "a snail late for its own wedding",
-    "a T-rex struggling to floss its teeth",
-    "a ghost who's scared of the dark",
-    "a cloud that only rains on Mondays",
-    "a pigeon running for mayor",
-    "a vampire ordering a smoothie at 3am",
-    "a knight fighting a rude vending machine",
-    "grandpa teaching a robot to knit",
-    "a frog writing a five-star restaurant review",
-    "a mermaid who never learned to swim",
-    "an octopus juggling its own shoes",
-    "a bear quietly filing its taxes",
-    "a traffic cone that dreams of being a wizard hat",
-    "a whale trying to fit into a bathtub",
-    "a spider knitting a tiny sweater",
-    "a sloth winning the 100m sprint",
-    "a penguin sunbathing in the desert",
-    "a cactus that just wants a hug",
-  ],
-  zh: [
-    "一只当上总统的猫在签字",
-    "奶奶赢了滑板比赛",
-    "一个怕下雨的机器人",
-    "两只企鹅为披萨吵架",
-    "一条只吃沙拉的龙",
-    "一个忘了月亮的宇航员",
-    "一条想吹生日蜡烛的鲨鱼",
-    "卡在旋转门里的巫师",
-    "赶不上自己婚礼的蜗牛",
-    "一只在认真剔牙的霸王龙",
-    "一个怕黑的幽灵",
-    "只在星期一下雨的一朵云",
-    "在竞选市长的鸽子",
-    "凌晨三点点奶昔的吸血鬼",
-    "和自动售货机吵架的骑士",
-    "在教机器人织毛衣的爷爷",
-    "给餐厅写五星好评的青蛙",
-    "不会游泳的美人鱼",
-    "给自己的鞋子玩杂耍的章鱼",
-    "在默默报税的熊",
-    "梦想成为巫师帽的路障",
-    "想挤进浴缸的鲸鱼",
-    "在织小毛衣的蜘蛛",
-    "跑赢一百米的树懒",
-    "在沙漠里晒日光浴的企鹅",
-    "只想要一个拥抱的仙人掌",
-  ],
+// Inspiration gives players building blocks, never a ready-made answer.
+const INSPIRATION: Record<"en" | "zh", { characters: string[]; settings: string[]; twists: string[] }> = {
+  en: {
+    characters: [
+      "a sleepy dragon", "a clumsy astronaut", "a detective penguin", "a nervous vampire",
+      "a superhero cat", "a forgetful wizard", "a musical shark", "an ambitious snail",
+      "a tiny dinosaur", "a dramatic ghost", "a robot grandparent", "a polite monster",
+      "a mermaid", "an octopus", "a bear", "a pigeon", "a frog", "a cactus",
+    ],
+    settings: [
+      "at a wedding", "in a supermarket", "on the moon", "during a talent show",
+      "on a first date", "at the airport", "in a haunted library", "during a cooking contest",
+      "at school", "on a pirate ship", "inside a video game", "at a birthday party",
+      "on a roller coaster", "in a tiny kitchen", "at the beach", "during a snowstorm",
+      "in a museum", "on live television",
+    ],
+    twists: [
+      "while hiding a secret", "with one hand tied", "but everything is upside down", "during a power outage",
+      "while being chased", "without making a sound", "with a ridiculous disguise", "while running late",
+      "but nobody believes them", "with an unexpected sidekick", "while pretending to be famous", "in zero gravity",
+      "with the wrong instructions", "during a surprise party", "while carrying something enormous", "but time is running backward",
+      "with a tiny umbrella", "while everyone else is asleep",
+    ],
+  },
+  zh: {
+    characters: [
+      "一条困倦的龙", "一个笨手笨脚的宇航员", "一只侦探企鹅", "一个紧张的吸血鬼",
+      "一只超级英雄猫", "一个健忘的巫师", "一条会唱歌的鲨鱼", "一只野心勃勃的蜗牛",
+      "一只迷你恐龙", "一个戏很多的幽灵", "一个机器人爷爷", "一只礼貌的怪兽",
+      "一条美人鱼", "一只章鱼", "一头熊", "一只鸽子", "一只青蛙", "一棵仙人掌",
+    ],
+    settings: [
+      "在婚礼上", "在超市里", "在月球上", "在才艺比赛中",
+      "第一次约会时", "在机场", "在闹鬼的图书馆", "在厨艺大赛中",
+      "在学校里", "在海盗船上", "在电子游戏里", "在生日派对上",
+      "在过山车上", "在迷你厨房里", "在海边", "在暴风雪中",
+      "在博物馆里", "在电视直播中",
+    ],
+    twists: [
+      "同时藏着一个秘密", "一只手被绑住了", "但所有东西都颠倒了", "突然停电了",
+      "同时正被追赶", "还不能发出声音", "穿着离谱的伪装", "眼看就要迟到了",
+      "但没有人相信", "身边多了个意外搭档", "还要假装自己是明星", "却处于失重状态",
+      "拿到了一份错误说明书", "正好遇上惊喜派对", "还扛着一个巨大的东西", "但时间正在倒流",
+      "只带着一把迷你雨伞", "而其他人都睡着了",
+    ],
+  },
 };
 
 export default function TelephoneGame({ view, myId, isHost, lang, send }: Props) {
@@ -148,11 +137,6 @@ export default function TelephoneGame({ view, myId, isHost, lang, send }: Props)
           {header}
           <p className="uc-status">✓ {zh ? "已提交!" : "Submitted!"}</p>
           {waiting}
-          {isHost && (
-            <button className="secondary small" onClick={() => send("tpSkip")}>
-              {zh ? "都好了?进入下一步 →" : "Everyone in? Next step →"}
-            </button>
-          )}
         </section>
       </main>
     );
@@ -164,12 +148,12 @@ export default function TelephoneGame({ view, myId, isHost, lang, send }: Props)
       <main className="center">
         <section className="result-panel uc-panel">
           {header}
-          <SeedWriter zh={zh} onSubmit={(text) => send("tpText", { text })} />
-          {isHost && (
-            <button className="secondary small" onClick={() => send("tpSkip")}>
-              {zh ? "都写好了?下一步 →" : "Everyone in? Next step →"}
-            </button>
-          )}
+          <SeedWriter
+            zh={zh}
+            inspirationIndex={view.inspirationIndex}
+            onInspire={() => send("tpInspire")}
+            onSubmit={(text) => send("tpText", { text })}
+          />
         </section>
       </main>
     );
@@ -184,11 +168,6 @@ export default function TelephoneGame({ view, myId, isHost, lang, send }: Props)
           <p className="uc-status">{zh ? "这幅画在画什么?写下来!" : "What is this a drawing of? Write it down!"}</p>
           {view.prompt && <StrokeCanvas strokes={view.prompt.strokes} height={320} />}
           <CaptionWriter zh={zh} onSubmit={(text) => send("tpText", { text })} />
-          {isHost && (
-            <button className="secondary small" onClick={() => send("tpSkip")}>
-              {zh ? "都好了?下一步 →" : "Everyone in? Next step →"}
-            </button>
-          )}
         </section>
       </main>
     );
@@ -208,34 +187,57 @@ export default function TelephoneGame({ view, myId, isHost, lang, send }: Props)
           zh={zh}
           onSubmit={(strokes) => send("tpDraw", { strokes })}
         />
-        {isHost && (
-          <button className="secondary small" onClick={() => send("tpSkip")}>
-            {zh ? "都画好了?下一步 →" : "Everyone in? Next step →"}
-          </button>
-        )}
       </section>
     </main>
   );
 }
 
-function SeedWriter({ zh, onSubmit }: { zh: boolean; onSubmit: (text: string) => void }) {
+function SeedWriter({
+  zh,
+  inspirationIndex,
+  onInspire,
+  onSubmit,
+}: {
+  zh: boolean;
+  inspirationIndex: number | null;
+  onInspire: () => void;
+  onSubmit: (text: string) => void;
+}) {
   const [text, setText] = useState("");
-  const ideas = SEED_IDEAS[zh ? "zh" : "en"];
-  const surprise = () => setText(ideas[Math.floor(Math.random() * ideas.length)]);
+  const ideas = INSPIRATION[zh ? "zh" : "en"];
+  const inspiration = inspirationIndex === null
+    ? null
+    : {
+        character: ideas.characters[inspirationIndex % ideas.characters.length],
+        setting: ideas.settings[Math.floor(inspirationIndex / ideas.characters.length) % ideas.settings.length],
+        twist: ideas.twists[
+          Math.floor(inspirationIndex / (ideas.characters.length * ideas.settings.length)) % ideas.twists.length
+        ],
+      };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <p className="uc-status">{zh ? "写一句好玩的话 — 下一个人要把它画出来!" : "Write a fun sentence — the next person has to draw it!"}</p>
+      <p className="tp-writing-tip">
+        {zh ? "小提示：一个角色 + 一个动作 + 一个意外细节，越具体越好画。" : "Tip: one character + one action + one surprising detail is easiest to draw."}
+      </p>
+      {inspiration && (
+        <div className="tp-inspiration" aria-live="polite">
+          <span>{zh ? "试试把这三个灵感组合起来" : "Try combining these three prompts"}</span>
+          <strong>{inspiration.character} · {inspiration.setting} · {inspiration.twist}</strong>
+          <small>{zh ? "动作和完整故事仍由你来决定。" : "You still choose the action and complete story."}</small>
+        </div>
+      )}
       <textarea
         className="tp-input"
         value={text}
         maxLength={200}
         rows={2}
         onChange={(e) => setText(e.target.value)}
-        placeholder={zh ? "例如:一只当上总统的猫…" : "e.g. a cat who became president…"}
+        placeholder={zh ? "谁在什么地方做什么?" : "Who is doing what, and where?"}
       />
       <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
-        <button className="secondary small" onClick={surprise}>
-          {zh ? "🎲 来点灵感" : "🎲 Surprise me"}
+        <button type="button" className="secondary small" onClick={onInspire}>
+          {inspiration ? (zh ? "🎲 换一组灵感" : "🎲 New inspiration") : (zh ? "💡 需要灵感?" : "💡 Need inspiration?")}
         </button>
         <button className="primary" disabled={!text.trim()} onClick={() => onSubmit(text.trim())}>
           {zh ? "提交" : "Submit"}
@@ -307,7 +309,8 @@ function TelephoneReveal({
         <div className="uc-top">
           <span className="uc-badge">📞 {zh ? "结果回放" : "Reveal"}</span>
           <span className="uc-round">
-            {zh ? "线索" : "Story"} {ci + 1}/{chains.length}
+            {chain?.ownerName}
+            {chain?.ownerId === myId ? (zh ? "（你）" : " (you)") : ""} · {ci + 1}/{chains.length}
           </span>
           {isHost && (
             <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
@@ -316,24 +319,10 @@ function TelephoneReveal({
           )}
         </div>
 
-        <div className="tp-chain-tabs">
-          {chains.map((c, i) => (
-            <button
-              key={c.ownerId}
-              className={i === ci ? "chip active" : "chip"}
-              disabled={!isHost}
-              onClick={() => goto(i, 0)}
-            >
-              {c.ownerName}
-              {c.ownerId === myId ? (zh ? " (你)" : " (you)") : ""}
-            </button>
-          ))}
-        </div>
-
         <p className="uc-status">
           {zh
-            ? `${chain?.ownerName} 的线索 — 看看它是从哪一步开始跑偏的!`
-            : `${chain?.ownerName}'s chain — spot where it went off the rails!`}
+            ? "看看这条线索是从哪一步开始跑偏的！"
+            : "Spot where this chain went off the rails!"}
         </p>
 
         <div className="tp-reveal-list">
@@ -449,7 +438,9 @@ function TPDrawingBoard({ zh, onSubmit }: { zh: boolean; onSubmit: (strokes: Str
   const drawingRef = useRef(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [color, setColor] = useState("#15191f");
-  const [width, setWidth] = useState(6);
+  const [tool, setTool] = useState<"pen" | "eraser">("pen");
+  const activeColor = tool === "eraser" ? "#ffffff" : color;
+  const activeWidth = tool === "eraser" ? 18 : 6;
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -478,8 +469,8 @@ function TPDrawingBoard({ zh, onSubmit }: { zh: boolean; onSubmit: (strokes: Str
       }
     };
     strokes.forEach(renderStroke);
-    if (pointsRef.current.length) renderStroke({ color, width, points: pointsRef.current });
-  }, [color, strokes, width]);
+    if (pointsRef.current.length) renderStroke({ color: activeColor, width: activeWidth, points: pointsRef.current });
+  }, [activeColor, activeWidth, strokes]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -507,6 +498,7 @@ function TPDrawingBoard({ zh, onSubmit }: { zh: boolean; onSubmit: (strokes: Str
     return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
   }
   function startStroke(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (tool === "eraser" && strokes.length === 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     drawingRef.current = true;
     pointsRef.current = [point(event)];
@@ -522,7 +514,7 @@ function TPDrawingBoard({ zh, onSubmit }: { zh: boolean; onSubmit: (strokes: Str
     drawingRef.current = false;
     const points = pointsRef.current;
     pointsRef.current = [];
-    if (points.length) setStrokes((prev) => [...prev, { color, width, points }]);
+    if (points.length) setStrokes((prev) => [...prev, { color: activeColor, width: activeWidth, points }]);
   }
 
   return (
@@ -532,26 +524,36 @@ function TPDrawingBoard({ zh, onSubmit }: { zh: boolean; onSubmit: (strokes: Str
           {["#15191f", "#e0576f", "#4f7cff", "#18a67d", "#f4c542"].map((item) => (
             <button
               key={item}
-              className={item === color ? "tool-color active" : "tool-color"}
+              className={tool === "pen" && item === color ? "tool-color active" : "tool-color"}
               style={{ background: item }}
-              onClick={() => setColor(item)}
+              onClick={() => {
+                setColor(item);
+                setTool("pen");
+              }}
             />
           ))}
+          <button
+            className={tool === "eraser" ? "tool-color eraser-tool active" : "tool-color eraser-tool"}
+            disabled={!strokes.length}
+            onClick={() => setTool("eraser")}
+            aria-label={zh ? "橡皮" : "Eraser"}
+            title={zh ? "橡皮" : "Eraser"}
+          >
+            🧽
+          </button>
         </div>
         <div>
-          {[4, 8, 14].map((item) => (
-            <button
-              key={item}
-              className={item === width ? "tool-size active" : "tool-size"}
-              onClick={() => setWidth(item)}
-            >
-              {item}
-            </button>
-          ))}
           <button className="secondary small" disabled={!strokes.length} onClick={() => setStrokes((p) => p.slice(0, -1))}>
             {zh ? "撤销" : "Undo"}
           </button>
-          <button className="secondary small" disabled={!strokes.length} onClick={() => setStrokes([])}>
+          <button
+            className="secondary small"
+            disabled={!strokes.length}
+            onClick={() => {
+              setStrokes([]);
+              setTool("pen");
+            }}
+          >
             {zh ? "清空" : "Clear"}
           </button>
           <button className="primary small pass-btn" disabled={!strokes.length} onClick={() => onSubmit(strokes)}>

@@ -24,7 +24,6 @@ type Props = {
   netRef: MutableRefObject<((msg: NetMsg) => void) | null>;
   onPlayAgain: () => void;
   onExit: () => void;
-  onQuit: () => void;
 };
 
 type Cat = {
@@ -53,7 +52,6 @@ export default function YarnPalsGame({
   netRef,
   onPlayAgain,
   onExit,
-  onQuit,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scoreARef = useRef<HTMLSpanElement | null>(null);
@@ -752,16 +750,6 @@ export default function YarnPalsGame({
           <span ref={timerRef} className="yarn-clock">
             02:00
           </span>
-          {isHost && (
-            <button
-              className="yarn-quit"
-              onClick={onQuit}
-              aria-label="End match and return to lobby"
-              title="End match (back to lobby)"
-            >
-              ✕
-            </button>
-          )}
         </div>
         <div className="yarn-side blue">
           <span ref={scoreBRef} className="yarn-score">

@@ -1,22 +1,26 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+
+export type WVCardView = {
+  playerId: string;
+  name: string;
+  clue: string;
+  value: number;
+};
 
 export type WVView = {
-  sub: "clue" | "guess" | "reveal";
+  sub: "play" | "reveal";
   round: number;
-  total: number;
   left: string;
   right: string;
-  psychicName: string;
-  isPsychic: boolean;
-  target: number; // -1 when hidden
-  clue: string;
-  myGuess: number; // -1 when none
-  youClue: boolean;
-  youGuess: boolean;
-  submittedCount: number;
-  guessers: number;
-  results: Array<{ name: string; guess: number; points: number }> | null;
-  psychicPoints: number;
+  myValue: number;
+  isSpectator: boolean;
+  hasPlayed: boolean;
+  canPlay: boolean;
+  isActive: boolean;
+  active: WVCardView | null;
+  placed: WVCardView[];
+  participantCount: number;
+  revealStartedAt: number;
 };
 
 type Props = {
@@ -26,171 +30,189 @@ type Props = {
   send: (type: string, payload?: unknown) => void;
 };
 
+const REVEAL_STEP_MS = 900;
+
 export default function WavelengthGame({ view, isHost, lang, send }: Props) {
   const zh = lang === "zh";
   const [clue, setClue] = useState("");
-  const [guess, setGuess] = useState(50);
+  const [revealedCount, setRevealedCount] = useState(0);
 
-  // Reset the local slider/clue when a new round or phase begins.
   useEffect(() => {
-    setGuess(view.myGuess >= 0 ? view.myGuess : 50);
     setClue("");
-  }, [view.round, view.sub, view.myGuess]);
+  }, [view.round]);
 
-  const submitClue = () => {
-    if (clue.trim()) send("wvClue", { clue: clue.trim() });
+  useEffect(() => {
+    if (view.sub !== "reveal") {
+      setRevealedCount(0);
+      return;
+    }
+
+    const update = () => {
+      const elapsed = Math.max(0, Date.now() - view.revealStartedAt);
+      setRevealedCount(Math.min(view.placed.length, Math.floor(elapsed / REVEAL_STEP_MS) + 1));
+    };
+    update();
+    const timer = window.setInterval(update, 100);
+    return () => window.clearInterval(timer);
+  }, [view.sub, view.revealStartedAt, view.placed.length]);
+
+  const playCard = () => {
+    const clean = clue.trim();
+    if (clean) send("wvReady", { clue: clean });
   };
-  const submitGuess = () => send("wvGuess", { value: guess });
 
-  // Stagger labels vertically so close guesses don't overlap.
-  const sortedPins = (view.results ?? []).slice().sort((a, b) => a.guess - b.guess);
-  let lane = 0;
-  const pins = sortedPins.map((r, i) => {
-    if (i > 0 && Math.abs(r.guess - sortedPins[i - 1].guess) < 9) lane += 1;
-    else lane = 0;
-    return { ...r, lane };
-  });
+  const revealComplete = view.sub === "reveal" && revealedCount >= view.placed.length;
+  const perfectlyOrdered =
+    revealComplete && view.placed.every((card, index) => index === 0 || view.placed[index - 1].value < card.value);
 
   return (
-    <main className="center">
+    <main className="center wv-main">
       <section className="result-panel wv-panel">
         <div className="wv-top">
-          <span className="uc-round">{zh ? `第 ${view.round}/${view.total} 轮` : `Round ${view.round}/${view.total}`}</span>
-          <span className="uc-round">{view.psychicName}{zh ? " 出线索" : " gives the clue"}</span>
-          {isHost && (
-            <button
-              className="exit-x"
-              onClick={() => send("reset")}
-              title={zh ? "结束本局(回大厅)" : "End game (back to lobby)"}
-              aria-label="End game"
-            >
-              ✕
-            </button>
-          )}
+          <span className="uc-round">{lang === "zh" ? `第 ${view.round} 轮` : `Round ${view.round}`}</span>
+          <span className="uc-round">
+            {view.sub === "reveal"
+              ? zh
+                ? "从左到右揭晓"
+                : "Revealing left to right"
+              : zh
+                ? `${view.placed.length}/${view.participantCount} 已出牌`
+                : `${view.placed.length}/${view.participantCount} cards played`}
+          </span>
         </div>
 
-        <div className={`wv-bar-wrap ${view.sub === "reveal" ? "reveal" : ""}`}>
-          <span className="wv-end">{view.left}</span>
-          <div className="wv-bar">
-            {view.target >= 0 && (
-              <>
-                <div className="wv-target" style={{ left: `${view.target - 5}%`, width: "10%" }} />
-                <div className="wv-target-line" style={{ left: `${view.target}%` }} />
-              </>
-            )}
-            {pins.map((r, i) => (
-              <div key={i} className="wv-pin" style={{ left: `${r.guess}%` }}>
-                <span className="wv-pin-name" style={{ bottom: `${40 + r.lane * 18}px` }}>
-                  {r.name} +{r.points}
-                </span>
-                <span className="wv-pin-dot" />
-              </div>
-            ))}
-            {view.youGuess && (
-              <div className="wv-pin you" style={{ left: `${guess}%` }}>
-                <span className="wv-pin-dot" />
-              </div>
-            )}
+        <div className="wv-spectrum-head" aria-label={`${view.left} to ${view.right}`}>
+          <strong>{view.left}</strong>
+          <span>0 ————————— 100</span>
+          <strong>{view.right}</strong>
+        </div>
+
+        {!view.isSpectator && view.sub === "play" && (
+          <div className="wv-secret">
+            <span>{zh ? "你的秘密数字" : "Your secret number"}</span>
+            <strong>{view.myValue}</strong>
+            <small>
+              {zh
+                ? `想一个介于「${view.left}」和「${view.right}」之间的提示，不要说出数字。`
+                : `Think of a clue between “${view.left}” and “${view.right}” without saying the number.`}
+            </small>
           </div>
-          <span className="wv-end">{view.right}</span>
-        </div>
+        )}
 
-        {view.sub === "clue" &&
-          (view.youClue ? (
-            <>
-              <p className="uc-status">
-                {zh ? "只有你看得到目标 🎯 — 给一个线索,把大家引到目标处" : "Only you can see the target 🎯 — give a clue to steer everyone there"}
-              </p>
-              <div className="uc-describe-row">
-                <input
-                  value={clue}
-                  onChange={(e) => setClue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitClue();
-                  }}
-                  maxLength={60}
-                  placeholder={zh ? "输入线索词…" : "Type your clue…"}
-                />
-                <button className="primary" onClick={submitClue}>
-                  {zh ? "给线索 →" : "Give clue →"}
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="uc-status">{view.psychicName}{zh ? " 正在想线索…" : " is thinking of a clue…"}</p>
-          ))}
+        {view.sub === "play" && view.canPlay && (
+          <div className="wv-compose">
+            <input
+              value={clue}
+              onChange={(event) => setClue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") playCard();
+              }}
+              maxLength={80}
+              placeholder={zh ? "输入符合你数字的提示…" : "Type a clue that fits your number…"}
+              autoFocus
+            />
+            <button className="primary" disabled={!clue.trim()} onClick={playCard}>
+              {zh ? "公开提示" : "Reveal clue"}
+            </button>
+          </div>
+        )}
 
-        {view.sub === "guess" && (
-          <>
-            <p className="wv-clue">
-              {zh ? "线索:" : "Clue: "}
-              <strong>{view.clue}</strong>
-            </p>
-            {view.youGuess ? (
-              <>
-                <input
-                  className="wv-slider"
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={guess}
-                  onChange={(e) => setGuess(Number(e.target.value))}
-                />
-                <button className="primary" onClick={submitGuess}>
-                  {zh ? "确定" : "Lock in"}
-                </button>
-              </>
-            ) : view.isPsychic ? (
-              <p className="uc-status">
-                {zh ? `等待大家猜 (${view.submittedCount}/${view.guessers})` : `Waiting for guesses (${view.submittedCount}/${view.guessers})`}
-              </p>
-            ) : view.myGuess >= 0 ? (
-              <p className="uc-status">
-                {zh ? `已提交,等待其他人 (${view.submittedCount}/${view.guessers})` : `Locked in — waiting (${view.submittedCount}/${view.guessers})`}
-              </p>
-            ) : (
-              <p className="uc-status">{zh ? "等待中…" : "Waiting…"}</p>
-            )}
-            {isHost && view.submittedCount > 0 && view.submittedCount < view.guessers && (
-              <button className="secondary small" onClick={() => send("wvReveal")}>
-                {zh ? "立即揭晓" : "Reveal now"}
+        {view.sub === "play" && view.active && (
+          <div className={`wv-active-card${view.isActive ? " mine" : ""}`}>
+            <span>{view.active.name}</span>
+            <strong>{view.active.clue}</strong>
+            <small>
+              {view.isActive
+                ? zh
+                  ? "把你的牌放到合适的位置"
+                  : "Place your card where it belongs"
+                : zh
+                  ? "正在选择位置…"
+                  : "is choosing a position…"}
+            </small>
+          </div>
+        )}
+
+        <div className="wv-line-scroll">
+          <div className={`wv-card-line${view.placed.length === 0 ? " empty" : ""}`}>
+            {view.placed.map((card, index) => {
+              const visible = view.sub === "reveal" && index < revealedCount;
+              const previousVisible = view.sub === "reveal" && index > 0 && index - 1 < revealedCount;
+              const orderBreak = visible && previousVisible && view.placed[index - 1].value > card.value;
+              return (
+                <Fragment key={card.playerId}>
+                  {view.isActive && (
+                    <button
+                      className="wv-place-slot"
+                      onClick={() => send("wvPlace", { position: index })}
+                      aria-label={zh ? `放在第 ${index + 1} 位` : `Place in position ${index + 1}`}
+                    >
+                      <span>＋</span>
+                      {zh ? "放这里" : "Place"}
+                    </button>
+                  )}
+                  <article className={`wv-order-card${visible ? " revealed" : ""}${orderBreak ? " order-break" : ""}`}>
+                    {orderBreak && <span className="wv-break-mark">↙</span>}
+                    <span className="wv-card-name">{card.name}</span>
+                    <strong>{card.clue}</strong>
+                    {view.sub === "reveal" && (
+                      <span className="wv-card-number" aria-hidden={!visible}>
+                        {visible ? card.value : "?"}
+                      </span>
+                    )}
+                  </article>
+                </Fragment>
+              );
+            })}
+            {view.isActive && (
+              <button
+                className="wv-place-slot"
+                onClick={() => send("wvPlace", { position: view.placed.length })}
+                aria-label={zh ? `放在第 ${view.placed.length + 1} 位` : `Place in position ${view.placed.length + 1}`}
+              >
+                <span>＋</span>
+                {zh ? "放这里" : "Place"}
               </button>
             )}
-          </>
+            {!view.isActive && view.placed.length === 0 && (
+              <p className="wv-empty-line">{zh ? "第一张牌会放在这里" : "The first card will go here"}</p>
+            )}
+          </div>
+        </div>
+
+        {view.sub === "play" && !view.active && view.hasPlayed && (
+          <p className="uc-status">{zh ? "你的牌已锁定，看看谁准备好接着出牌。" : "Your card is locked. Who's ready to play next?"}</p>
+        )}
+        {view.sub === "play" && !view.active && view.isSpectator && (
+          <p className="uc-status">{zh ? "本轮观战，下轮即可加入。" : "You're watching this round and can join the next one."}</p>
         )}
 
         {view.sub === "reveal" && (
-          <>
-            <p className="wv-clue">
-              {zh ? "线索:" : "Clue: "}
-              <strong>{view.clue}</strong>
-            </p>
-            <div className="wv-results">
-              {view.results
-                ?.slice()
-                .sort((a, b) => b.points - a.points)
-                .map((r, i) => (
-                  <div key={i} className="wv-result-row">
-                    <strong>{r.name}</strong>
-                    <em className={`wv-pts p${r.points}`}>+{r.points}</em>
-                  </div>
-                ))}
-              <div className="wv-result-row psychic">
-                <strong>
-                  {view.psychicName} {zh ? "(线索人)" : "(clue)"}
-                </strong>
-                <em className="wv-pts">+{view.psychicPoints}</em>
-              </div>
-            </div>
-            {isHost ? (
-              <button className="primary" onClick={() => send("wvNext")}>
-                {view.round >= view.total ? (zh ? "查看排行榜" : "See results") : zh ? "下一轮" : "Next round"}
-              </button>
+          <div className="wv-reveal-status" aria-live="polite">
+            {!revealComplete ? (
+              <p>{zh ? "翻牌中…" : "Revealing…"}</p>
             ) : (
-              <p className="muted">{zh ? "等待房主…" : "Waiting for host…"}</p>
+              <p className={perfectlyOrdered ? "perfect" : "mixed"}>
+                {perfectlyOrdered
+                  ? zh
+                    ? "完全有序！大家真的心有灵序 ✨"
+                    : "Perfect order — truly in sync! ✨"
+                  : zh
+                    ? "原来大家心里的刻度不太一样 😄"
+                    : "Looks like everyone's scale was a little different 😄"}
+              </p>
             )}
-          </>
+          </div>
         )}
+
+        {view.sub === "reveal" && revealComplete &&
+          (isHost ? (
+            <button className="primary" onClick={() => send("wvNext")}>
+              {zh ? "再来一轮" : "Another round"}
+            </button>
+          ) : (
+            <p className="muted">{zh ? "等待房主…" : "Waiting for host…"}</p>
+          ))}
       </section>
     </main>
   );

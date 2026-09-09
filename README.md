@@ -10,18 +10,20 @@ Create a room, share the invite link, and play together on your phones or laptop
 
 ## Games
 
-- **Draw & Act (你画我猜 & 你比我猜)** — one player draws or acts a secret word; everyone else races to guess. Staged hints reveal the word length (20s) then its category (40s).
-- **Pass the Pen (接力画)** — one guesser, everyone else relay-draws the same secret; cooperative team score.
-- **Undercover (谁是卧底)** — everyone gets a secret word, but the undercover(s) get a similar different one. Describe your word, then vote out the spy. 4+ players.
-- **Wavelength (心有灵犀)** — one player gives a clue for a hidden spot on a spectrum (cold ↔ hot); everyone else slides to guess it. 3+ players.
-- **Sketchy (滥竽充画)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
+- **Pictionary (你画我猜)** — one player draws a secret word while everyone else races to guess it.
 - **Telephone (传声画筒)** — everyone writes a secret sentence, then chains rotate: draw what you got, caption the drawing you got, repeat. At the end every chain is replayed step-by-step so you can trace exactly where it drifted. 3+ players.
-- **Punchline (神回复)** — each round everyone answers the same silly prompt, then all answers appear anonymously and everyone votes for their favorite (not their own). Every vote is worth 100 points. 3+ players.
+- **Pass the Pen (接力画)** — one guesser, everyone else relay-draws the same secret; cooperative team score.
+- **Sketchy (滥竽充画)** — everyone co-draws on one canvas — one fake artist only sees the category, not the word. Spot the fake by their strokes! 3+ players.
+- **Charades (你演我猜)** — one player acts out a secret word without speaking while everyone else races to guess it.
+- **Undercover (谁是卧底)** — everyone gets a secret word, but the undercover(s) get a similar different one. Describe your word, then vote out the spy. 4+ players.
+- **In Sync (心有灵序)** — everyone gets a secret number on the same spectrum, reveals a clue when ready, and places their card into the shared order before all numbers are flipped. No points. 3+ players.
 - **Balderdash (胡说八道)** — obscure word, fake definitions. Everyone invents a believable definition, then votes for the REAL one. +100 for spotting truth, +50 per fool. Host can reveal hints. 3+ players.
 
 ### Temporarily retired
 
 **Kitty Cup (猫咪杯)** is hidden from the game selector while its real-time networking is redesigned to reduce multiplayer latency. Its implementation remains in the repository for possible future work.
+
+**Punchline (神回复)** is hidden from the game selector while its gameplay is reconsidered. Its implementation remains in the repository for possible future work.
 
 English or 中文 word banks, chosen when you create a room.
 

@@ -69,11 +69,6 @@ function Header({
     <div className="uc-top">
       <span className="uc-badge">📖 {zh ? "胡说八道" : "Balderdash"}</span>
       {right}
-      {isHost && (
-        <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-          ✕
-        </button>
-      )}
     </div>
   );
 }

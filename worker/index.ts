@@ -136,36 +136,34 @@ type UCView = {
   reveal: Array<{ name: string; role: UCRole; word: string }> | null;
 };
 
+type WVCard = { playerId: string; clue: string };
 type WVState = {
-  sub: "clue" | "guess" | "reveal";
+  sub: "play" | "reveal";
   round: number;
-  total: number;
-  order: string[];
-  psychicIndex: number;
-  psychicId: string;
   left: string;
   right: string;
-  target: number;
-  clue: string;
-  guesses: Record<string, number>;
+  scaleDeck: number[];
+  participants: string[];
+  values: Record<string, number>;
+  placed: WVCard[];
+  active: WVCard | null;
+  revealStartedAt: number;
 };
+type WVCardView = WVCard & { name: string; value: number };
 type WVView = {
-  sub: "clue" | "guess" | "reveal";
+  sub: "play" | "reveal";
   round: number;
-  total: number;
   left: string;
   right: string;
-  psychicName: string;
-  isPsychic: boolean;
-  target: number; // -1 when hidden
-  clue: string;
-  myGuess: number; // -1 when none
-  youClue: boolean;
-  youGuess: boolean;
-  submittedCount: number;
-  guessers: number;
-  results: Array<{ name: string; guess: number; points: number }> | null;
-  psychicPoints: number;
+  myValue: number;
+  isSpectator: boolean;
+  hasPlayed: boolean;
+  canPlay: boolean;
+  isActive: boolean;
+  active: WVCardView | null;
+  placed: WVCardView[];
+  participantCount: number;
+  revealStartedAt: number;
 };
 
 type FAState = {
@@ -1012,39 +1010,117 @@ const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
   ],
 };
 
-// Wavelength (心有灵犀): spectrum end-concepts [left, right].
-const WAVELENGTH_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
-  en: [
-    ["cold", "hot"], ["cheap", "expensive"], ["useless", "useful"], ["niche", "mainstream"],
-    ["hard", "easy"], ["dangerous", "safe"], ["ugly", "beautiful"], ["slow", "fast"],
-    ["old", "new"], ["weak", "strong"], ["quiet", "loud"], ["bitter", "sweet"],
-    ["ordinary", "magical"], ["boring", "fun"], ["fake", "real"], ["soft", "hard"],
-    ["light", "heavy"], ["dirty", "clean"], ["sad", "happy"], ["childish", "mature"],
-    ["portable", "bulky"], ["unhealthy", "healthy"], ["obscure", "famous"], ["simple", "complex"],
-    ["gentle", "intense"], ["cheap thing", "luxury"], ["realistic", "fantasy"], ["rare", "common"],
-    ["handmade", "mass-produced"], ["introvert", "extrovert"], ["frugal", "wasteful"],
-    ["traditional", "trendy"], ["overrated", "underrated"], ["temporary", "permanent"],
-  ],
-  zh: [
-    ["冷", "热"], ["便宜", "贵"], ["没用", "有用"], ["小众", "主流"],
-    ["难", "容易"], ["危险", "安全"], ["丑", "美"], ["慢", "快"],
-    ["旧", "新"], ["弱", "强"], ["安静", "吵闹"], ["苦", "甜"],
-    ["普通", "神奇"], ["无聊", "有趣"], ["假", "真"], ["软", "硬"],
-    ["轻", "重"], ["脏", "干净"], ["悲伤", "快乐"], ["幼稚", "成熟"],
-    ["便携", "笨重"], ["不健康", "健康"], ["冷门", "有名"], ["简单", "复杂"],
-    ["温和", "激烈"], ["便宜货", "奢侈品"], ["现实", "幻想"], ["罕见", "常见"],
-    ["手工", "量产"], ["内向", "外向"], ["省钱", "浪费"],
-    ["传统", "潮流"], ["被高估", "被低估"], ["短暂", "永久"],
-  ],
-};
-
-function wvPoints(guess: number, target: number): number {
-  const d = Math.abs(guess - target);
-  if (d <= 5) return 4;
-  if (d <= 12) return 3;
-  if (d <= 22) return 2;
-  return 0;
-}
+// In Sync (心有灵序): spectrum end-concepts [left, right].
+const IN_SYNC_SCALES: Array<{ en: [string, string]; zh: [string, string] }> = [
+  { en: ["ice-cold", "lava-hot"], zh: ["冰块一样冷", "岩浆一样热"] },
+  { en: ["library quiet", "stadium loud"], zh: ["图书馆般安静", "体育场般吵"] },
+  { en: ["snail pace", "rocket speed"], zh: ["蜗牛速度", "火箭速度"] },
+  { en: ["featherlight", "impossible to lift"], zh: ["轻如羽毛", "根本搬不动"] },
+  { en: ["cloud-soft", "rock-hard"], zh: ["云朵般软", "石头般硬"] },
+  { en: ["candle-dim", "blindingly bright"], zh: ["烛光微亮", "亮到睁不开眼"] },
+  { en: ["bone-dry", "soaking wet"], zh: ["干得冒烟", "湿透了"] },
+  { en: ["tiny", "blocks the skyline"], zh: ["小不点", "遮住天际线"] },
+  { en: ["five seconds", "a whole lifetime"], zh: ["五秒钟", "一辈子"] },
+  { en: ["effortless", "nearly impossible"], zh: ["毫不费力", "几乎不可能"] },
+  { en: ["instantly obvious", "brain-melting"], zh: ["一眼就懂", "烧脑到冒烟"] },
+  { en: ["perfectly calm", "total chaos"], zh: ["风平浪静", "彻底失控"] },
+  { en: ["mildly fun", "unforgettable"], zh: ["有一点好玩", "一辈子忘不了"] },
+  { en: ["tiny letdown", "soul-crushing"], zh: ["小小失望", "心态彻底崩了"] },
+  { en: ["mildly annoying", "villain origin story"], zh: ["有点烦", "黑化起点"] },
+  { en: ["minor inconvenience", "day ruined"], zh: ["一点不方便", "一整天毁了"] },
+  { en: ["tiny mistake", "changes history"], zh: ["小失误", "改变历史"] },
+  { en: ["slightly awkward", "move to a new country"], zh: ["略微尴尬", "想换个国家生活"] },
+  { en: ["a little blush", "delete all socials"], zh: ["脸红一下", "连夜注销账号"] },
+  { en: ["white lie", "friendship-ending lie"], zh: ["善意小谎", "友尽级谎言"] },
+  { en: ["harmless prank", "never speak again"], zh: ["无伤大雅", "从此绝交"] },
+  { en: ["barely know them", "knows every secret"], zh: ["点头之交", "知道所有秘密"] },
+  { en: ["tiny crush", "planning the wedding"], zh: ["一点心动", "婚礼都想好了"] },
+  { en: ["just friendly", "wildly flirty"], zh: ["纯友好", "疯狂暧昧"] },
+  { en: ["small favor", "owe you for life"], zh: ["举手之劳", "欠你一辈子"] },
+  { en: ["casual hobby", "whole personality"], zh: ["随便玩玩", "整个人设都是它"] },
+  { en: ["small talk", "entire life story"], zh: ["随口寒暄", "人生故事全说了"] },
+  { en: ["quiet hangout", "legendary party"], zh: ["安静小聚", "传说级派对"] },
+  { en: ["completely sober", "dancing on tables"], zh: ["完全清醒", "站桌上跳舞"] },
+  { en: ["pajamas", "red carpet"], zh: ["睡衣出门", "红毯造型"] },
+  { en: ["bedhead", "runway hair"], zh: ["刚睡醒的头发", "秀场发型"] },
+  { en: ["light snack", "royal feast"], zh: ["垫垫肚子", "皇室盛宴"] },
+  { en: ["a little hungry", "could eat the table"], zh: ["有一点饿", "桌子都能吃了"] },
+  { en: ["instant noodles", "Michelin-worthy"], zh: ["泡面水平", "米其林水平"] },
+  { en: ["weak coffee", "see through time"], zh: ["咖啡味的水", "喝完看穿时间"] },
+  { en: ["pleasantly cool", "instant brain freeze"], zh: ["清凉刚好", "瞬间脑冻"] },
+  { en: ["no spice", "breathing fire"], zh: ["完全不辣", "辣到喷火"] },
+  { en: ["normal portion", "food challenge"], zh: ["正常饭量", "大胃王挑战"] },
+  { en: ["safe topping", "culinary crime"], zh: ["稳妥配料", "美食犯罪"] },
+  { en: ["bite-sized", "unhinge your jaw"], zh: ["一口一个", "得把下巴卸掉"] },
+  { en: ["one episode", "binge until sunrise"], zh: ["只看一集", "追到天亮"] },
+  { en: ["background tune", "stuck in your head"], zh: ["背景音乐", "脑内循环"] },
+  { en: ["forgettable movie", "instant classic"], zh: ["看完就忘", "当场封神"] },
+  { en: ["background extra", "main-character energy"], zh: ["路人甲", "主角光环"] },
+  { en: ["tutorial enemy", "final boss"], zh: ["新手村小怪", "终极 Boss"] },
+  { en: ["slightly spooky", "lights on all night"], zh: ["有点阴森", "整夜不敢关灯"] },
+  { en: ["cozy cabin", "definitely haunted"], zh: ["温馨小屋", "绝对闹鬼"] },
+  { en: ["safe to pet", "run for your life"], zh: ["放心摸", "赶紧逃命"] },
+  { en: ["tiny bug", "burn the house down"], zh: ["小虫一只", "房子不要了"] },
+  { en: ["light drizzle", "biblical flood"], zh: ["毛毛雨", "末日洪水"] },
+  { en: ["gentle breeze", "furniture flying"], zh: ["微风拂面", "家具起飞"] },
+  { en: ["small puddle", "ocean crossing"], zh: ["小水坑", "横渡大洋"] },
+  { en: ["short stroll", "epic quest"], zh: ["散个小步", "史诗远征"] },
+  { en: ["speed bump", "Mount Everest"], zh: ["小土坡", "珠穆朗玛峰"] },
+  { en: ["quick errand", "all-day mission"], zh: ["顺路办一下", "一整天任务"] },
+  { en: ["relaxing vacation", "survival show"], zh: ["躺平度假", "荒野求生"] },
+  { en: ["warm-up", "Olympic final"], zh: ["热热身", "奥运决赛"] },
+  { en: ["friendly match", "lifelong rivalry"], zh: ["友谊赛", "宿敌之战"] },
+  { en: ["easy level", "rage-quit level"], zh: ["闭眼都能过", "气到摔手柄"] },
+  { en: ["casual fan", "walking encyclopedia"], zh: ["随便看看", "行走的百科全书"] },
+  { en: ["ignore it", "drop everything"], zh: ["不用管", "立刻放下一切"] },
+  { en: ["battery is fine", "find a charger now"], zh: ["电量很安心", "马上找充电器"] },
+  { en: ["one snapshot", "full photoshoot"], zh: ["随手一拍", "完整写真"] },
+  { en: ["waits patiently", "losing their mind"], zh: ["耐心等待", "等到发疯"] },
+  { en: ["basically on time", "the event is over"], zh: ["基本准时", "活动都结束了"] },
+  { en: ["reasonable alarm", "criminally early"], zh: ["正常闹钟", "早得犯法"] },
+  { en: ["pleasant weather", "cancel all plans"], zh: ["适合出门", "取消全部计划"] },
+  { en: ["pocket change", "financial disaster"], zh: ["零花钱", "财务灾难"] },
+  { en: ["simple gift", "story for years"], zh: ["普通礼物", "能讲好多年"] },
+  { en: ["small glitch", "system meltdown"], zh: ["小故障", "系统全面崩溃"] },
+  { en: ["nobody believes it", "airtight excuse"], zh: ["没人会信", "无懈可击"] },
+  { en: ["one sentence", "needs a conspiracy wall"], zh: ["一句话说清", "得画满一面墙"] },
+  { en: ["ordinary coincidence", "full conspiracy"], zh: ["普通巧合", "惊天阴谋"] },
+  { en: ["old-fashioned", "from the future"], zh: ["很复古", "来自未来"] },
+  { en: ["local secret", "world-famous"], zh: ["本地人才知道", "全世界都知道"] },
+  { en: ["quick doodle", "museum masterpiece"], zh: ["随手涂鸦", "博物馆名作"] },
+  { en: ["perfectly ordinary", "pure magic"], zh: ["平平无奇", "简直有魔法"] },
+  { en: ["barely funny", "can't breathe laughing"], zh: ["有一点好笑", "笑到不能呼吸"] },
+  { en: ["mild surprise", "life-changing twist"], zh: ["小惊喜", "人生大反转"] },
+  { en: ["very cautious", "famous last words"], zh: ["谨慎得很", "经典遗言"] },
+  { en: ["a little dramatic", "soap-opera finale"], zh: ["有点戏多", "八点档大结局"] },
+  { en: ["just enough", "wildly excessive"], zh: ["刚刚好", "夸张过头"] },
+  { en: ["quiet wallflower", "owns the room"], zh: ["安静小透明", "全场焦点"] },
+  { en: ["easy choice", "existential crisis"], zh: ["秒选", "选择困难到怀疑人生"] },
+  { en: ["maybe send a text", "call right now"], zh: ["发个消息就行", "现在立刻打电话"] },
+  { en: ["easy to share", "guard with your life"], zh: ["随便分享", "拼命护住"] },
+  { en: ["nobody notices", "the room goes silent"], zh: ["没人注意", "全场突然安静"] },
+  { en: ["maybe someday", "bucket-list must"], zh: ["有机会再说", "此生必做"] },
+  { en: ["looks cheap", "absurdly luxurious"], zh: ["一眼廉价", "奢华得离谱"] },
+  { en: ["deeply niche", "everyone knows it"], zh: ["极其小众", "人尽皆知"] },
+  { en: ["criminally underrated", "wildly overrated"], zh: ["被严重低估", "被吹上天"] },
+  { en: ["bare minimum", "years of effort"], zh: ["最低限度", "多年心血"] },
+  { en: ["harmless rumor", "headline news"], zh: ["无伤传闻", "头条新闻"] },
+  { en: ["tiny secret", "state secret"], zh: ["小秘密", "国家机密"] },
+  { en: ["low commitment", "no turning back"], zh: ["随时退出", "没有回头路"] },
+  { en: ["fine roommate habit", "move out tonight"], zh: ["室友小习惯", "今晚就搬走"] },
+  { en: ["okay first date", "tell the grandchildren"], zh: ["还行的约会", "讲给孙辈听"] },
+  { en: ["lazy Sunday", "need a vacation after"], zh: ["懒散周日", "结束后还要休假"] },
+  { en: ["tiny celebration", "national holiday"], zh: ["小小庆祝", "全国放假庆祝"] },
+  { en: ["background smell", "evacuate the building"], zh: ["淡淡气味", "整栋楼撤离"] },
+  { en: ["slightly sticky", "industrial glue"], zh: ["有点黏", "工业强力胶"] },
+  { en: ["clean enough", "hazmat suit needed"], zh: ["还算干净", "得穿防化服"] },
+  { en: ["polite applause", "standing ovation"], zh: ["礼貌鼓掌", "全场起立欢呼"] },
+  { en: ["barely competitive", "friendship test"], zh: ["佛系参与", "友谊大考验"] },
+  { en: ["common pet", "mythical creature"], zh: ["常见宠物", "神话生物"] },
+  { en: ["easy to draw", "impossible to draw"], zh: ["很好画", "根本画不出来"] },
+  { en: ["child's play", "experts only"], zh: ["小菜一碟", "专家限定"] },
+  { en: ["quick fix", "rebuild everything"], zh: ["随手修好", "全部推倒重来"] },
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1248,14 +1324,11 @@ export class GameRoom extends DurableObject<Env> {
       case "ucProceed":
         await this.ucProceed(ws);
         break;
-      case "wvClue":
-        await this.wvClue(ws, command.payload);
+      case "wvReady":
+        await this.wvReady(ws, command.payload);
         break;
-      case "wvGuess":
-        await this.wvGuess(ws, command.payload);
-        break;
-      case "wvReveal":
-        await this.wvForceReveal(ws);
+      case "wvPlace":
+        await this.wvPlace(ws, command.payload);
         break;
       case "wvNext":
         await this.wvNext(ws);
@@ -1289,9 +1362,6 @@ export class GameRoom extends DurableObject<Env> {
         break;
       case "plVote":
         await this.plVote(ws, command.payload);
-        break;
-      case "plSkip":
-        await this.plSkip(ws);
         break;
       case "bdDefine":
         await this.bdDefine(ws, command.payload);
@@ -1701,120 +1771,94 @@ export class GameRoom extends DurableObject<Env> {
     await this.beginRound(state, 1);
   }
 
-  // ---------- Wavelength (心有灵犀) ----------
+  // ---------- In Sync (心有灵序) ----------
   private startWavelength(state: RoomState): void {
-    const order = this.shuffleIds(state.players.map((p) => p.id));
     state.wavelength = {
-      sub: "clue",
+      sub: "play",
       round: 0,
-      total: state.rounds,
-      order,
-      psychicIndex: -1,
-      psychicId: "",
       left: "",
       right: "",
-      target: 50,
-      clue: "",
-      guesses: {},
+      scaleDeck: [],
+      participants: [],
+      values: {},
+      placed: [],
+      active: null,
+      revealStartedAt: 0,
     };
     state.phase = "playing";
     state.messages = [];
-    this.wvSetupRound(state, 1, 0);
+    this.wvSetupRound(state, 1);
     this.save(state);
     this.broadcast(state);
   }
 
-  private wvSetupRound(state: RoomState, round: number, psychicIndex: number): void {
+  private wvSetupRound(state: RoomState, round: number): void {
     const wv = state.wavelength;
     if (!wv) return;
-    const pairs = WAVELENGTH_PAIRS[state.lang];
-    const pair = pairs[crypto.getRandomValues(new Uint32Array(1))[0] % pairs.length];
+    if (wv.scaleDeck.length === 0) {
+      wv.scaleDeck = this.shuffleIds(IN_SYNC_SCALES.map((_, index) => String(index))).map(Number);
+    }
+    const scale = IN_SYNC_SCALES[wv.scaleDeck.shift() ?? 0];
+    const pair = scale[state.lang];
+    const participants = state.players.filter((player) => player.connected).map((player) => player.id);
+    const available = Array.from({ length: 101 }, (_, value) => value);
+    const values: Record<string, number> = {};
+    for (const id of participants) {
+      const index = crypto.getRandomValues(new Uint32Array(1))[0] % available.length;
+      values[id] = available.splice(index, 1)[0];
+    }
     wv.round = round;
-    wv.psychicIndex = psychicIndex;
-    wv.psychicId = wv.order[psychicIndex % wv.order.length];
     wv.left = pair[0];
     wv.right = pair[1];
-    wv.target = 8 + (crypto.getRandomValues(new Uint32Array(1))[0] % 85); // 8..92
-    wv.clue = "";
-    wv.guesses = {};
-    wv.sub = "clue";
+    wv.participants = participants;
+    wv.values = values;
+    wv.placed = [];
+    wv.active = null;
+    wv.revealStartedAt = 0;
+    wv.sub = "play";
     this.system(
       state,
-      state.lang === "zh"
-        ? `第 ${round} 轮:${this.playerName(state, wv.psychicId)} 出线索`
-        : `Round ${round}: ${this.playerName(state, wv.psychicId)} gives the clue`,
+      state.lang === "zh" ? `第 ${round} 轮：准备好就出牌` : `Round ${round}: play when you're ready`,
     );
   }
 
-  private async wvClue(ws: WebSocket, payload: unknown): Promise<void> {
+  private async wvReady(ws: WebSocket, payload: unknown): Promise<void> {
     const session = this.session(ws);
     const state = this.load();
     const wv = state.wavelength;
-    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "clue") return;
-    if (session.playerId !== wv.psychicId || !isRecord(payload)) return;
-    const clue = asText(payload.clue, "", 60);
+    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "play" || !isRecord(payload)) return;
+    if (wv.active || !wv.participants.includes(session.playerId)) return;
+    if (wv.placed.some((card) => card.playerId === session.playerId)) return;
+    const clue = asText(payload.clue, "", 80);
     if (!clue) return;
-    wv.clue = clue;
-    wv.sub = "guess";
+    wv.active = { playerId: session.playerId, clue };
     this.save(state);
     this.broadcast(state);
   }
 
-  private async wvGuess(ws: WebSocket, payload: unknown): Promise<void> {
+  private async wvPlace(ws: WebSocket, payload: unknown): Promise<void> {
     const session = this.session(ws);
     const state = this.load();
     const wv = state.wavelength;
-    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "guess") return;
-    if (session.playerId === wv.psychicId || !isRecord(payload)) return;
-    if (!state.players.some((p) => p.id === session.playerId)) return;
-    const value = typeof payload.value === "number" ? Math.max(0, Math.min(100, Math.round(payload.value))) : 50;
-    wv.guesses[session.playerId] = value;
-
-    const guessers = state.players.filter((p) => p.id !== wv.psychicId).map((p) => p.id);
-    if (guessers.every((id) => wv.guesses[id] !== undefined)) {
-      this.wvResolve(state);
+    if (!session || state.game !== "wavelength" || !wv || wv.sub !== "play" || !isRecord(payload)) return;
+    if (!wv.active || wv.active.playerId !== session.playerId) return;
+    const requested = typeof payload.position === "number" ? Math.round(payload.position) : -1;
+    if (requested < 0 || requested > wv.placed.length) return;
+    wv.placed.splice(requested, 0, wv.active);
+    wv.active = null;
+    if (wv.placed.length >= wv.participants.length) {
+      wv.sub = "reveal";
+      wv.revealStartedAt = Date.now();
     }
     this.save(state);
     this.broadcast(state);
-  }
-
-  private async wvForceReveal(ws: WebSocket): Promise<void> {
-    const state = this.load();
-    const wv = state.wavelength;
-    if (!this.isHost(ws, state) || !wv || wv.sub !== "guess") return;
-    this.wvResolve(state);
-    this.save(state);
-    this.broadcast(state);
-  }
-
-  private wvResolve(state: RoomState): void {
-    const wv = state.wavelength;
-    if (!wv) return;
-    let totalPts = 0;
-    let count = 0;
-    for (const [id, guess] of Object.entries(wv.guesses)) {
-      const pts = wvPoints(guess, wv.target);
-      const player = state.players.find((p) => p.id === id);
-      if (player) player.score += pts;
-      totalPts += pts;
-      count += 1;
-    }
-    const psychic = state.players.find((p) => p.id === wv.psychicId);
-    if (psychic && count > 0) psychic.score += Math.round(totalPts / count);
-    wv.sub = "reveal";
   }
 
   private async wvNext(ws: WebSocket): Promise<void> {
     const state = this.load();
     const wv = state.wavelength;
     if (!this.isHost(ws, state) || !wv || wv.sub !== "reveal") return;
-    if (wv.round >= wv.total) {
-      state.phase = "gameEnd";
-      this.save(state);
-      this.broadcast(state);
-      return;
-    }
-    this.wvSetupRound(state, wv.round + 1, wv.psychicIndex + 1);
+    this.wvSetupRound(state, wv.round + 1);
     this.save(state);
     this.broadcast(state);
   }
@@ -1822,38 +1866,28 @@ export class GameRoom extends DurableObject<Env> {
   private wvView(state: RoomState, playerId?: string): WVView | null {
     const wv = state.wavelength;
     if (state.game !== "wavelength" || !wv) return null;
-    const isPsychic = playerId === wv.psychicId;
     const revealed = wv.sub === "reveal" || state.phase === "gameEnd";
-    const showTarget = isPsychic || revealed;
-    const guessers = state.players.filter((p) => p.id !== wv.psychicId).length;
+    const isSpectator = !playerId || !wv.participants.includes(playerId);
+    const hasPlayed = !!playerId && wv.placed.some((card) => card.playerId === playerId);
+    const cardView = (card: WVCard): WVCardView => ({
+      ...card,
+      name: this.playerName(state, card.playerId),
+      value: revealed ? (wv.values[card.playerId] ?? -1) : -1,
+    });
     return {
       sub: wv.sub,
       round: wv.round,
-      total: wv.total,
       left: wv.left,
       right: wv.right,
-      psychicName: this.playerName(state, wv.psychicId),
-      isPsychic,
-      target: showTarget ? wv.target : -1,
-      clue: wv.clue,
-      myGuess: playerId && wv.guesses[playerId] !== undefined ? wv.guesses[playerId] : -1,
-      youClue: isPsychic && wv.sub === "clue",
-      youGuess: !isPsychic && wv.sub === "guess" && !!playerId && wv.guesses[playerId] === undefined,
-      submittedCount: Object.keys(wv.guesses).length,
-      guessers,
-      results: revealed
-        ? Object.entries(wv.guesses).map(([id, guess]) => ({
-            name: this.playerName(state, id),
-            guess,
-            points: wvPoints(guess, wv.target),
-          }))
-        : null,
-      psychicPoints: (() => {
-        if (!revealed) return 0;
-        const vals = Object.values(wv.guesses);
-        if (vals.length === 0) return 0;
-        return Math.round(vals.reduce((s, g) => s + wvPoints(g, wv.target), 0) / vals.length);
-      })(),
+      myValue: playerId && wv.values[playerId] !== undefined ? wv.values[playerId] : -1,
+      isSpectator,
+      hasPlayed,
+      canPlay: wv.sub === "play" && !isSpectator && !hasPlayed && !wv.active,
+      isActive: !!playerId && wv.active?.playerId === playerId,
+      active: wv.active ? cardView(wv.active) : null,
+      placed: wv.placed.map(cardView),
+      participantCount: wv.participants.length,
+      revealStartedAt: wv.revealStartedAt,
     };
   }
 
@@ -2331,23 +2365,6 @@ export class GameRoom extends DurableObject<Env> {
 
     const waiting = this.plConnectedPlayers(state).filter((id) => !pl.submitted[id]);
     if (waiting.length === 0) this.plStartVoting(state);
-    this.save(state);
-    this.broadcast(state);
-    await this.schedule(state);
-  }
-
-  private async plSkip(ws: WebSocket): Promise<void> {
-    const state = this.load();
-    const pl = state.punchline;
-    if (!this.isHost(ws, state) || !pl) return;
-    if (pl.sub === "answer") {
-      this.plStartVoting(state);
-    } else if (pl.sub === "vote") {
-      if (pl.revealed) this.plAdvanceRound(state);
-      else this.plResolveRound(state);
-    } else {
-      return;
-    }
     this.save(state);
     this.broadcast(state);
     await this.schedule(state);
@@ -3278,6 +3295,10 @@ export class GameRoom extends DurableObject<Env> {
     const state = this.load();
     if (!this.isHost(ws, state)) return;
     state.phase = "lobby";
+    if (state.game === "punchline") {
+      state.game = "classic";
+      state.mode = "pictionary";
+    }
     state.round = null;
     state.yarn = null;
     state.undercover = null;
@@ -3419,8 +3440,10 @@ export class GameRoom extends DurableObject<Env> {
     // Wavelength: keep the round moving if a player drops out.
     if (state.game === "wavelength" && state.wavelength && state.phase === "playing") {
       const wv = state.wavelength;
-      wv.order = wv.order.filter((id) => id !== playerId);
-      delete wv.guesses[playerId];
+      wv.participants = wv.participants.filter((id) => id !== playerId);
+      delete wv.values[playerId];
+      wv.placed = wv.placed.filter((card) => card.playerId !== playerId);
+      if (wv.active?.playerId === playerId) wv.active = null;
       if (state.players.length < 2) {
         state.phase = "gameEnd";
         this.save(state);
@@ -3428,13 +3451,9 @@ export class GameRoom extends DurableObject<Env> {
         this.broadcast(state);
         return;
       }
-      if (playerId === wv.psychicId && wv.sub !== "reveal") {
-        this.wvSetupRound(state, wv.round, wv.psychicIndex % wv.order.length);
-      } else if (wv.sub === "guess") {
-        const guessers = state.players.filter((p) => p.id !== wv.psychicId).map((p) => p.id);
-        if (guessers.length > 0 && guessers.every((id) => wv.guesses[id] !== undefined)) {
-          this.wvResolve(state);
-        }
+      if (wv.sub === "play" && wv.participants.length > 0 && wv.placed.length >= wv.participants.length) {
+        wv.sub = "reveal";
+        wv.revealStartedAt = Date.now();
       }
       this.save(state);
       await this.schedule(state);
@@ -3958,6 +3977,28 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).balderdash === undefined) {
         parsed.balderdash = null;
       }
+      if (parsed.phase === "lobby" && parsed.game === "classic" && parsed.mode === "mixed") {
+        parsed.mode = "pictionary";
+      }
+      if (parsed.phase === "lobby" && parsed.game === "punchline") {
+        parsed.game = "classic";
+        parsed.mode = "pictionary";
+        parsed.punchline = null;
+      }
+      // The original Wavelength state used one clue-giver and shared slider
+      // guesses. Return an in-progress legacy room to the lobby rather than
+      // exposing that stale shape through the new In Sync view.
+      if (
+        parsed.game === "wavelength" &&
+        parsed.wavelength &&
+        !Array.isArray((parsed.wavelength as unknown as Record<string, unknown>).participants)
+      ) {
+        parsed.phase = "lobby";
+        parsed.wavelength = null;
+      }
+      if (parsed.wavelength && !Array.isArray(parsed.wavelength.scaleDeck)) {
+        parsed.wavelength.scaleDeck = [];
+      }
       parsed.players = parsed.players.map((player) => ({
         ...player,
         resumeTokenHash: typeof player.resumeTokenHash === "string" ? player.resumeTokenHash : "",
@@ -3991,7 +4032,7 @@ export class GameRoom extends DurableObject<Env> {
       players: [],
       game: "classic",
       lang: "en",
-      mode: "mixed",
+      mode: "pictionary",
       rounds: 5,
       round: null,
       yarn: null,

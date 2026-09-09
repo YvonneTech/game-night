@@ -110,11 +110,6 @@ export default function TelephoneGame({ view, myId, isHost, lang, send }: Props)
     <div className="uc-top">
       <span className="uc-badge">📞 {zh ? "传声画筒" : "Telephone"}</span>
       <span className="uc-round">{stepLabel}</span>
-      {isHost && (
-        <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-          ✕
-        </button>
-      )}
     </div>
   );
 
@@ -312,11 +307,6 @@ function TelephoneReveal({
             {chain?.ownerName}
             {chain?.ownerId === myId ? (zh ? "（你）" : " (you)") : ""} · {ci + 1}/{chains.length}
           </span>
-          {isHost && (
-            <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-              ✕
-            </button>
-          )}
         </div>
 
         <p className="uc-status">

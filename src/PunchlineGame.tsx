@@ -40,31 +40,16 @@ function useCountdown(deadline: number): number {
 
 export default function PunchlineGame({ view, isHost, lang, send }: Props) {
   const zh = lang === "zh";
-  if (view.sub === "vote") return <PunchVote view={view} isHost={isHost} zh={zh} send={send} />;
+  if (view.sub === "vote") return <PunchVote view={view} zh={zh} send={send} />;
   if (view.sub === "score") return <PunchScore view={view} isHost={isHost} zh={zh} send={send} />;
-  return <PunchAnswer view={view} isHost={isHost} zh={zh} send={send} />;
+  return <PunchAnswer view={view} zh={zh} send={send} />;
 }
 
-function Header({
-  zh,
-  isHost,
-  right,
-  send,
-}: {
-  zh: boolean;
-  isHost: boolean;
-  right?: React.ReactNode;
-  send: Props["send"];
-}) {
+function Header({ zh, right }: { zh: boolean; right?: React.ReactNode }) {
   return (
     <div className="uc-top">
       <span className="uc-badge">🎤 {zh ? "神回复" : "Punchline"}</span>
       {right}
-      {isHost && (
-        <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-          ✕
-        </button>
-      )}
     </div>
   );
 }
@@ -74,7 +59,7 @@ function roundLabel(view: PLView, zh: boolean) {
 }
 
 // ---- answer the shared prompt ----
-function PunchAnswer({ view, isHost, zh, send }: { view: PLView; isHost: boolean; zh: boolean; send: Props["send"] }) {
+function PunchAnswer({ view, zh, send }: { view: PLView; zh: boolean; send: Props["send"] }) {
   const seconds = useCountdown(view.answerDeadline);
   const [text, setText] = useState("");
   const timer = (
@@ -90,17 +75,11 @@ function PunchAnswer({ view, isHost, zh, send }: { view: PLView; isHost: boolean
     </p>
   );
 
-  const skipBtn = isHost ? (
-    <button className="secondary small" onClick={() => send("plSkip")}>
-      {zh ? "都好了?开始投票 →" : "Everyone in? Start voting →"}
-    </button>
-  ) : null;
-
   if (view.isSpectator) {
     return (
       <main className="center">
         <section className="result-panel uc-panel">
-          <Header zh={zh} isHost={isHost} right={timer} send={send} />
+          <Header zh={zh} right={timer} />
           <p className="muted">
             {zh ? "本局已开始 — 你在旁观,下一局加入吧。" : "This game is in progress — you'll join the next one."}
           </p>
@@ -114,11 +93,10 @@ function PunchAnswer({ view, isHost, zh, send }: { view: PLView; isHost: boolean
     return (
       <main className="center">
         <section className="result-panel uc-panel">
-          <Header zh={zh} isHost={isHost} right={timer} send={send} />
+          <Header zh={zh} right={timer} />
           <p className="sb-prompt">{view.prompt}</p>
           <p className="uc-status">✓ {zh ? "已提交!等大家写完就开始投票。" : "Submitted! Voting starts when everyone's in."}</p>
           {waiting}
-          {skipBtn}
         </section>
       </main>
     );
@@ -131,7 +109,7 @@ function PunchAnswer({ view, isHost, zh, send }: { view: PLView; isHost: boolean
   return (
     <main className="center" style={{ maxWidth: 620 }}>
       <section className="result-panel uc-panel">
-        <Header zh={zh} isHost={isHost} right={timer} send={send} />
+        <Header zh={zh} right={timer} />
         <p className="uc-status">{zh ? "给出你最好笑的回答:" : "Give the funniest answer you can:"}</p>
         <p className="sb-prompt">{view.prompt}</p>
         <input
@@ -148,14 +126,13 @@ function PunchAnswer({ view, isHost, zh, send }: { view: PLView; isHost: boolean
         <button className="primary" disabled={!text.trim()} onClick={submit} style={{ marginTop: 4 }}>
           {zh ? "提交" : "Submit"}
         </button>
-        {skipBtn}
       </section>
     </main>
   );
 }
 
 // ---- vote on all answers (can't vote your own) ----
-function PunchVote({ view, isHost, zh, send }: { view: PLView; isHost: boolean; zh: boolean; send: Props["send"] }) {
+function PunchVote({ view, zh, send }: { view: PLView; zh: boolean; send: Props["send"] }) {
   const seconds = useCountdown(view.voteDeadline);
   const answers = view.answers ?? [];
   const resolved = view.revealed;
@@ -176,7 +153,7 @@ function PunchVote({ view, isHost, zh, send }: { view: PLView; isHost: boolean; 
   return (
     <main className="center" style={{ maxWidth: 680 }}>
       <section className="result-panel" style={{ textAlign: "left", display: "flex", flexDirection: "column", gap: 14 }}>
-        <Header zh={zh} isHost={isHost} right={timer} send={send} />
+        <Header zh={zh} right={timer} />
         <p className="sb-prompt" style={{ textAlign: "center" }}>
           {view.prompt}
         </p>
@@ -229,21 +206,6 @@ function PunchVote({ view, isHost, zh, send }: { view: PLView; isHost: boolean; 
           </p>
         )}
 
-        {isHost && (
-          <button className="secondary small" onClick={() => send("plSkip")}>
-            {resolved
-              ? view.round + 1 >= view.totalRounds
-                ? zh
-                  ? "看总分 →"
-                  : "See scores →"
-                : zh
-                  ? "下一题 →"
-                  : "Next prompt →"
-              : zh
-                ? "都投好了?出结果 →"
-                : "Everyone in? Reveal →"}
-          </button>
-        )}
       </section>
     </main>
   );
@@ -255,7 +217,7 @@ function PunchScore({ view, isHost, zh, send }: { view: PLView; isHost: boolean;
   return (
     <main className="center" style={{ maxWidth: 520 }}>
       <section className="result-panel" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <Header zh={zh} isHost={isHost} right={<span className="uc-round">{zh ? "总分" : "Scores"}</span>} send={send} />
+        <Header zh={zh} right={<span className="uc-round">{zh ? "总分" : "Scores"}</span>} />
         <p className="uc-status">{zh ? "本局最强神回复 🏆" : "Best comebacks of the night 🏆"}</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {scores.map((s, i) => (

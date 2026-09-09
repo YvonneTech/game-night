@@ -67,11 +67,6 @@ export default function FakeArtistGame({ view, myId, strokes, isHost, lang, send
               🎨 {zh ? `假画家 · ${view.fakeCount} 个` : `Fake Artist · ${view.fakeCount} fake${view.fakeCount > 1 ? "s" : ""}`}
             </span>
             <span className="uc-round">{zh ? "投票" : "Vote"}</span>
-            {isHost && (
-              <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-                ✕
-              </button>
-            )}
           </div>
 
           <div className="uc-word">
@@ -142,11 +137,6 @@ export default function FakeArtistGame({ view, myId, strokes, isHost, lang, send
           <div className="uc-top">
             <span className="uc-badge">🎨 {zh ? "结果" : "Reveal"}</span>
             <span className="uc-round">{view.eliminated ? `${view.eliminated.name} ${zh ? "出局" : "out"}` : ""}</span>
-            {isHost && (
-              <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-                ✕
-              </button>
-            )}
           </div>
           <div className="uc-reveal">
             <h2>
@@ -189,11 +179,6 @@ export default function FakeArtistGame({ view, myId, strokes, isHost, lang, send
           <span className="uc-round">
             {roundInfo} · <span className={turnLeft <= 5 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</span>
           </span>
-          {isHost && (
-            <button className="exit-x" onClick={() => send("reset")} title={zh ? "结束本局" : "End game"}>
-              ✕
-            </button>
-          )}
         </div>
 
         <div className="uc-word">
@@ -293,7 +278,13 @@ function FADrawingBoard({
   const pointsRef = useRef<Array<{ x: number; y: number }>>([]);
   const drawingRef = useRef(false);
   const [color, setColor] = useState("#15191f");
-  const [width, setWidth] = useState(6);
+  const [tool, setTool] = useState<"pen" | "eraser">("pen");
+  const activeColor = tool === "eraser" ? "#ffffff" : color;
+  const activeWidth = tool === "eraser" ? 18 : 6;
+
+  useEffect(() => {
+    if (disabled) setTool("pen");
+  }, [disabled]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -325,8 +316,8 @@ function FADrawingBoard({
     };
 
     strokes.forEach(renderStroke);
-    if (pointsRef.current.length) renderStroke({ color, width, points: pointsRef.current });
-  }, [color, strokes, width]);
+    if (pointsRef.current.length) renderStroke({ color: activeColor, width: activeWidth, points: pointsRef.current });
+  }, [activeColor, activeWidth, strokes]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -359,7 +350,7 @@ function FADrawingBoard({
   }
 
   function start(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (disabled) return;
+    if (disabled || (tool === "eraser" && strokes.length === 0)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     drawingRef.current = true;
     pointsRef.current = [point(event)];
@@ -377,36 +368,38 @@ function FADrawingBoard({
     drawingRef.current = false;
     const points = pointsRef.current;
     pointsRef.current = [];
-    if (points.length) onChange([...strokes, { color, width, points }]);
+    if (points.length) onChange([...strokes, { color: activeColor, width: activeWidth, points }]);
   }
 
   const canUndo = !disabled && strokes.length > minStrokes;
 
   return (
-    <div className="board" style={{ border: "3px solid var(--strong)", borderRadius: 8, overflow: "hidden" }}>
+    <div className={disabled ? "board is-disabled" : "board"} style={{ border: "3px solid var(--strong)", borderRadius: 8, overflow: "hidden" }}>
       <div className="tools">
         <div>
           {["#15191f", "#e0576f", "#4f7cff", "#18a67d", "#f4c542"].map((item) => (
             <button
               key={item}
-              className={item === color ? "tool-color active" : "tool-color"}
+              className={tool === "pen" && item === color ? "tool-color active" : "tool-color"}
               style={{ background: item }}
               disabled={disabled}
-              onClick={() => setColor(item)}
+              onClick={() => {
+                setColor(item);
+                setTool("pen");
+              }}
             />
           ))}
+          <button
+            className={tool === "eraser" ? "tool-color eraser-tool active" : "tool-color eraser-tool"}
+            disabled={disabled || !strokes.length}
+            onClick={() => setTool("eraser")}
+            aria-label="Eraser"
+            title="Eraser"
+          >
+            🧽
+          </button>
         </div>
         <div>
-          {[4, 8, 14].map((item) => (
-            <button
-              key={item}
-              className={item === width ? "tool-size active" : "tool-size"}
-              disabled={disabled}
-              onClick={() => setWidth(item)}
-            >
-              {item}
-            </button>
-          ))}
           <button className="secondary small" disabled={!canUndo} onClick={() => onChange(strokes.slice(0, -1))}>
             Undo
           </button>

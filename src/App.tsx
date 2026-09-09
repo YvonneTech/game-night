@@ -123,22 +123,22 @@ type RoomSession = { playerId: string; reconnectToken: string };
 
 const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
   en: {
-    classic: "Draw & Act",
+    classic: "Pictionary",
     passthepen: "Pass the Pen",
     yarnpals: "Kitty Cup",
     undercover: "Undercover",
-    wavelength: "Wavelength",
+    wavelength: "In Sync",
     fakeartist: "Sketchy",
     telephone: "Telephone",
     punchline: "Punchline",
     balderdash: "Balderdash",
   },
   zh: {
-    classic: "画画 & 表演",
+    classic: "你画我猜",
     passthepen: "接力画",
     yarnpals: "猫咪杯",
     undercover: "谁是卧底",
-    wavelength: "心有灵犀",
+    wavelength: "心有灵序",
     fakeartist: "滥竽充画",
     telephone: "传声画筒",
     punchline: "神回复",
@@ -147,14 +147,25 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
 };
 
 const MODE_LABELS: Record<"en" | "zh", Record<GameMode, string>> = {
-  en: { pictionary: "pictionary", charades: "charades", mixed: "mixed" },
-  zh: { pictionary: "你画我猜", charades: "你比我猜", mixed: "混合" },
+  en: { pictionary: "Pictionary", charades: "Charades", mixed: "Mixed" },
+  zh: { pictionary: "你画我猜", charades: "你演我猜", mixed: "混合" },
 };
+
+const LOBBY_GAME_CHOICES = [
+  { key: "pictionary", game: "classic", mode: "pictionary" },
+  { key: "telephone", game: "telephone" },
+  { key: "passthepen", game: "passthepen" },
+  { key: "fakeartist", game: "fakeartist" },
+  { key: "charades", game: "classic", mode: "charades" },
+  { key: "undercover", game: "undercover" },
+  { key: "wavelength", game: "wavelength" },
+  { key: "balderdash", game: "balderdash" },
+] as const;
 
 const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: string }>> = {
   en: {
     classic: {
-      blurb: "Take turns: one player draws or acts a secret word while everyone else races to guess it in chat.",
+      blurb: "One player draws a secret word while everyone else races to guess it in chat.",
       scoring: "Guessers earn 100 / 80 / 60 / 40 / 20 by order; the performer earns +20 for each correct guess.",
     },
     passthepen: {
@@ -172,8 +183,8 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     },
     wavelength: {
       blurb:
-        "One player sees a hidden target on a spectrum (e.g. cold ↔ hot) and gives a clue; everyone else slides to guess where it is. Rotates each round. Needs 3+ players.",
-      scoring: "The closer your guess, the more points (bullseye 4 / near 3 / close 2). The clue-giver scores from the team average.",
+        "Everyone gets a secret number from 0–100 and writes a clue for the same spectrum. Reveal and place your card whenever you're ready, then flip every number from left to right. Needs 3+ players.",
+      scoring: "No points — see whether your clues landed in the right order.",
     },
     fakeartist: {
       blurb:
@@ -198,7 +209,7 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
   },
   zh: {
     classic: {
-      blurb: "轮流出题:一人画画或表演一个秘密词,其他人在聊天里抢答。",
+      blurb: "一人画出秘密词，其他人在聊天里抢答。",
       scoring: "猜对按先后得 100 / 80 / 60 / 40 / 20 分;出题人每被猜对一次 +20。",
     },
     passthepen: {
@@ -214,8 +225,8 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
       scoring: "把所有卧底都投出局=平民赢;卧底撑到最后=卧底赢。",
     },
     wavelength: {
-      blurb: "一人看到刻度上的隐藏目标(如 冷 ↔ 热)并给线索,其他人拖滑块猜位置。每轮轮换。需 3 人以上。",
-      scoring: "猜得越近分越高(正中 4 / 很近 3 / 接近 2);线索人按大家平均表现得分。",
+      blurb: "每人抽取一个 0–100 的秘密数字，并围绕同一组刻度写提示。准备好就公开提示并把牌插入队列，最后从左到右翻开数字。需 3 人以上。",
+      scoring: "不计分，只看大家能不能排成正确顺序。",
     },
     fakeartist: {
       blurb: "所有人在同一画布接力画画 — 假画家只知道类别，看不到词。靠画风找出卧底！需 3 人以上。",
@@ -233,6 +244,17 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
       blurb: "生僻词+瞎编。每人给同一个生僻词编一个假解释,然后投票找出真正的解释。骗到人得分,找对真相也得分。共3词,需3人以上。",
       scoring: "找出真解释+100,你的假解释每骗到1人+50。",
     },
+  },
+};
+
+const CHARADES_INFO: Record<"en" | "zh", { blurb: string; scoring: string }> = {
+  en: {
+    blurb: "One player acts out a secret word without speaking while everyone else races to guess it in chat.",
+    scoring: "Guessers earn 100 / 80 / 60 / 40 / 20 by order; the performer earns +20 for each correct guess.",
+  },
+  zh: {
+    blurb: "一人不能说话，只能用动作表演秘密词，其他人在聊天里抢答。",
+    scoring: "猜对按先后得 100 / 80 / 60 / 40 / 20 分；表演者每被猜对一次 +20。",
   },
 };
 
@@ -354,6 +376,7 @@ export default function App() {
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "closed">("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [guess, setGuess] = useState("");
+  const [mobileGuessesOpen, setMobileGuessesOpen] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [turnLeft, setTurnLeft] = useState(0);
   const [teamCountdown, setTeamCountdown] = useState(3);
@@ -367,6 +390,7 @@ export default function App() {
   const autoJoinStartedRef = useRef(false);
   const wasDisconnectedRef = useRef(false);
   const chatRef = useRef<HTMLDivElement | null>(null);
+  const mobileChatRef = useRef<HTMLDivElement | null>(null);
   const noticeIdRef = useRef(0);
   const yarnNetRef = useRef<((msg: { type: "yarnWorld" | "yarnInput"; payload: any }) => void) | null>(null);
 
@@ -378,6 +402,10 @@ export default function App() {
   const hostOnlySettings = "Only the host can change the game settings.";
   const game = snapshot?.game ?? "classic";
   const round = snapshot?.round ?? null;
+  const classicMode = snapshot?.mode === "charades" ? "charades" : "pictionary";
+  const selectedGameLabel = game === "classic" ? MODE_LABELS[uiLang][classicMode] : GAME_LABELS[uiLang][game];
+  const selectedGameInfo =
+    game === "classic" && classicMode === "charades" ? CHARADES_INFO[uiLang] : GAME_INFO[uiLang][game];
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
   const minPlayers =
@@ -700,7 +728,27 @@ export default function App() {
   useEffect(() => {
     const chat = chatRef.current;
     if (chat) chat.scrollTop = chat.scrollHeight;
-  }, [snapshot?.messages.length]);
+    const mobileChat = mobileChatRef.current;
+    if (mobileChat) mobileChat.scrollTop = mobileChat.scrollHeight;
+  }, [mobileGuessesOpen, snapshot?.messages.length]);
+
+  useEffect(() => {
+    setMobileGuessesOpen(false);
+  }, [game, phase, round?.number]);
+
+  useEffect(() => {
+    if (!mobileGuessesOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileGuessesOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mobileGuessesOpen]);
 
   useEffect(() => {
     if (!notice?.autoDismissMs) return;
@@ -806,9 +854,15 @@ export default function App() {
               <button className="secondary small" onClick={copyInviteLink}>
                 Invite
               </button>
-              <button className="secondary small" onClick={leaveRoom}>
-                Leave
-              </button>
+              {host && phase !== "lobby" ? (
+                <button className="secondary small" onClick={() => send("reset")} title="Ends the game for everyone">
+                  ← Back to Lobby
+                </button>
+              ) : (
+                <button className="secondary small" onClick={leaveRoom}>
+                  Leave
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -951,42 +1005,34 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "undercover", "wavelength", "fakeartist", "telephone", "punchline", "balderdash"] as const).map((option) => (
-                <button
-                  key={option}
-                  className={snapshot.game === option ? "chip active" : "chip"}
-                  disabled={!host}
-                  title={!host ? hostOnlySettings : undefined}
-                  onClick={() => changeSettings({ game: option })}
-                >
-                  {GAME_LABELS[snapshot.lang][option]}
-                </button>
-              ))}
-            </SettingGroup>
-            <div className="game-info">
-              <p>{GAME_INFO[snapshot.lang][snapshot.game].blurb}</p>
-              <p className="game-info-scoring">
-                <span>{snapshot.lang === "zh" ? "计分：" : "Scoring:"}</span>
-                {GAME_INFO[snapshot.lang][snapshot.game].scoring}
-              </p>
-            </div>
-            {snapshot.game === "classic" && (
-              <SettingGroup title="Mode">
-                {(["pictionary", "charades", "mixed"] as const).map((mode) => (
+              {LOBBY_GAME_CHOICES.map((option) => {
+                const optionMode = "mode" in option ? option.mode : undefined;
+                const selected =
+                  snapshot.game === option.game &&
+                  (option.game !== "classic" || snapshot.mode === optionMode || (snapshot.mode === "mixed" && optionMode === "pictionary"));
+                return (
                   <button
-                    key={mode}
-                    className={snapshot.mode === mode ? "chip active" : "chip"}
+                    key={option.key}
+                    className={selected ? "chip active" : "chip"}
                     disabled={!host}
                     title={!host ? hostOnlySettings : undefined}
-                    onClick={() => changeSettings({ mode })}
+                    onClick={() => changeSettings({ game: option.game, ...(optionMode ? { mode: optionMode } : {}) })}
                   >
-                    {MODE_LABELS[snapshot.lang][mode]}
+                    {optionMode ? MODE_LABELS[snapshot.lang][optionMode] : GAME_LABELS[snapshot.lang][option.game]}
                   </button>
-                ))}
-              </SettingGroup>
-            )}
+                );
+              })}
+            </SettingGroup>
+            <div className="game-info">
+              <p>{selectedGameInfo.blurb}</p>
+              <p className="game-info-scoring">
+                <span>{snapshot.lang === "zh" ? "计分：" : "Scoring:"}</span>
+                {selectedGameInfo.scoring}
+              </p>
+            </div>
             {game !== "yarnpals" &&
               game !== "undercover" &&
+              game !== "wavelength" &&
               game !== "fakeartist" &&
               game !== "telephone" &&
               game !== "punchline" &&
@@ -1009,7 +1055,7 @@ export default function App() {
               Start
             </button>
             {host && players.length < minPlayers && (
-              <p className="settings-note start-note">Need at least {minPlayers} players to start {GAME_LABELS[snapshot.lang][game]}.</p>
+              <p className="settings-note start-note">Need at least {minPlayers} players to start {selectedGameLabel}.</p>
             )}
           </section>
         </main>
@@ -1062,7 +1108,6 @@ export default function App() {
             netRef={yarnNetRef}
             onPlayAgain={() => send("start")}
             onExit={() => send("reset")}
-            onQuit={() => send("reset")}
           />
         </main>
       )}
@@ -1119,44 +1164,34 @@ export default function App() {
       )}
 
       {phase === "playing" && snapshot && round && game === "classic" && (
-        <main className="play">
-          <aside className="side">
-            <h2>Players</h2>
-            <PlayerList players={players} myId={id} compact />
-          </aside>
-
+        <main className="play classic-play">
           <section className="stage">
             <div className="round-bar">
               <span>
                 Round {round.number}/{snapshot.rounds} · {MODE_LABELS[snapshot.lang][round.mode]}
               </span>
               <div className="round-bar-right">
+                <span className="round-guessed">
+                  {players.filter((player) => player.id !== round.performerId && player.guessed).length}/
+                  {Math.max(0, players.length - 1)} guessed
+                </span>
                 <strong>{formatTime(timeLeft)}</strong>
-                {host && (
-                  <button
-                    className="exit-x"
-                    onClick={() => send("reset")}
-                    title="End game (back to lobby)"
-                    aria-label="End game"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             </div>
             <div className="prompt-bar">
               {snapshot.isPerformer ? (
                 <strong>{round.word}</strong>
               ) : (
-                <form
-                  className="prompt-guess"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    submitGuess();
-                  }}
-                >
-                  {snapshot.wordLength > 0 ? (
-                    <>
+                <>
+                  <form
+                    className="prompt-guess"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      submitGuess();
+                    }}
+                  >
+                  {snapshot.wordLength > 0 && (
+                    <div className="guess-hints">
                       <span className="prompt-letters">
                         {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
                       </span>
@@ -1165,17 +1200,7 @@ export default function App() {
                           {snapshot.lang === "zh" ? `类别：${round.category}` : `Category: ${round.category}`}
                         </span>
                       )}
-                    </>
-                  ) : (
-                    <span className="prompt-hintwait">
-                      {round.mode === "pictionary"
-                        ? snapshot.lang === "zh"
-                          ? "👀 看画面猜!"
-                          : "👀 Guess from the drawing!"
-                        : snapshot.lang === "zh"
-                          ? "👀 看 TA 表演,猜猜看!"
-                          : "👀 Watch them act and guess!"}
-                    </span>
+                    </div>
                   )}
                   <input
                     className="prompt-guess-input"
@@ -1187,9 +1212,32 @@ export default function App() {
                   <button type="submit" className="primary small" disabled={!canGuess}>
                     Send
                   </button>
-                </form>
+                  </form>
+                </>
               )}
             </div>
+
+            <div className={`mobile-guess-dock${snapshot.isPerformer ? " performer" : ""}`}>
+              <button className="mobile-guesses-button" onClick={() => setMobileGuessesOpen(true)}>
+                View all ↑
+              </button>
+              {me?.guessed && (
+                <div className="mobile-correct-banner" role="status">
+                  {snapshot.lang === "zh" ? "🎉 猜对了！" : "🎉 You got it!"}
+                </div>
+              )}
+              {!!snapshot.messages.length && (
+                <div className="mobile-guess-preview" aria-live="polite">
+                  {snapshot.messages.slice(-2).map((message) => (
+                    <div key={message.id} className={messageClass(message)}>
+                      {!message.system && <strong>{message.playerName}: </strong>}
+                      {message.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {round.mode === "pictionary" ? (
               <DrawingBoard
                 disabled={!snapshot.isPerformer}
@@ -1215,6 +1263,40 @@ export default function App() {
                 )}
               </div>
             )}
+
+            {mobileGuessesOpen && (
+              <div className="mobile-guesses-backdrop" onClick={() => setMobileGuessesOpen(false)}>
+                <section
+                  className="mobile-guesses-sheet"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Guesses"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="mobile-guesses-head">
+                    <span className="mobile-guesses-title">
+                      <strong>Guesses</strong>
+                      <span>{snapshot.messages.length}</span>
+                    </span>
+                    <button className="mobile-guesses-close" onClick={() => setMobileGuessesOpen(false)}>
+                      Close ↓
+                    </button>
+                  </div>
+                  <div className="mobile-guesses-list" ref={mobileChatRef}>
+                    {snapshot.messages.length ? (
+                      snapshot.messages.map((message) => (
+                        <div key={message.id} className={messageClass(message)}>
+                          {!message.system && <strong>{message.playerName}: </strong>}
+                          {message.text}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">No guesses yet</p>
+                    )}
+                  </div>
+                </section>
+              </div>
+            )}
           </section>
 
           <aside className="chat">
@@ -1235,12 +1317,7 @@ export default function App() {
       )}
 
       {phase === "playing" && snapshot && round && game === "passthepen" && (
-        <main className="play">
-          <aside className="side">
-            <h2>Players</h2>
-            <PlayerList players={players} myId={id} compact />
-          </aside>
-
+        <main className="play relay-play">
           <section className="stage">
             <div className="round-bar">
               <span>
@@ -1248,16 +1325,6 @@ export default function App() {
               </span>
               <div className="round-bar-right">
                 <strong className={turnLeft <= 3 ? "turn-timer low" : "turn-timer"}>{turnLeft}s</strong>
-                {host && (
-                  <button
-                    className="exit-x"
-                    onClick={() => send("reset")}
-                    title="End game (back to lobby)"
-                    aria-label="End game"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             </div>
 
@@ -1265,10 +1332,7 @@ export default function App() {
 
             <div className="prompt-bar">
               {snapshot.seeWord ? (
-                <>
-                  <span className="prompt-label">Draw:</span>
-                  <strong>{round.word}</strong>
-                </>
+                <strong>{round.word}</strong>
               ) : (
                 <form
                   className="prompt-guess"
@@ -1277,13 +1341,19 @@ export default function App() {
                     submitGuess();
                   }}
                 >
-                  <span className="prompt-label">Guess:</span>
+                  {snapshot.wordLength > 0 && (
+                    <div className="guess-hints">
+                      <span className="prompt-letters">
+                        {snapshot.wordLength} {snapshot.lang === "zh" ? "字" : "letters"}
+                      </span>
+                    </div>
+                  )}
                   <input
                     className="prompt-guess-input"
                     value={guess}
                     disabled={!canGuess}
                     onChange={(event) => setGuess(event.target.value)}
-                    placeholder={`Type your guess · ${snapshot.wordLength} ${snapshot.lang === "zh" ? "字" : "letters"}`}
+                    placeholder={me?.guessed ? "You guessed it!" : "Type your guess"}
                   />
                   <button type="submit" className="primary small" disabled={!canGuess}>
                     Send
@@ -1301,8 +1371,29 @@ export default function App() {
                     : "👀 Watch the drawing and type your guess"
                   : round.guessWindow
                     ? `⏰ Pens down — ${displayName(performer)} is guessing!`
-                    : `Waiting for ${displayName(players.find((p) => p.id === snapshot.relay?.currentId))} to draw`}
+                : `Waiting for ${displayName(players.find((p) => p.id === snapshot.relay?.currentId))} to draw`}
             </p>
+
+            <div className={`mobile-guess-dock${snapshot.youDraw ? " performer" : ""}`}>
+              <button className="mobile-guesses-button" onClick={() => setMobileGuessesOpen(true)}>
+                View all ↑
+              </button>
+              {me?.guessed && (
+                <div className="mobile-correct-banner" role="status">
+                  {snapshot.lang === "zh" ? "🎉 猜对了！" : "🎉 You got it!"}
+                </div>
+              )}
+              {!!snapshot.messages.length && (
+                <div className="mobile-guess-preview" aria-live="polite">
+                  {snapshot.messages.slice(-2).map((message) => (
+                    <div key={message.id} className={messageClass(message)}>
+                      {!message.system && <strong>{message.playerName}: </strong>}
+                      {message.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <DrawingBoard
               disabled={!snapshot.youDraw}
@@ -1312,6 +1403,40 @@ export default function App() {
               strokes={snapshot.strokes}
               onChange={(strokes) => send("draw", { strokes })}
             />
+
+            {mobileGuessesOpen && (
+              <div className="mobile-guesses-backdrop" onClick={() => setMobileGuessesOpen(false)}>
+                <section
+                  className="mobile-guesses-sheet"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Guesses"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="mobile-guesses-head">
+                    <span className="mobile-guesses-title">
+                      <strong>Guesses</strong>
+                      <span>{snapshot.messages.length}</span>
+                    </span>
+                    <button className="mobile-guesses-close" onClick={() => setMobileGuessesOpen(false)}>
+                      Close ↓
+                    </button>
+                  </div>
+                  <div className="mobile-guesses-list" ref={mobileChatRef}>
+                    {snapshot.messages.length ? (
+                      snapshot.messages.map((message) => (
+                        <div key={message.id} className={messageClass(message)}>
+                          {!message.system && <strong>{message.playerName}: </strong>}
+                          {message.text}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="muted">No guesses yet</p>
+                    )}
+                  </div>
+                </section>
+              </div>
+            )}
           </section>
 
           <aside className="chat">
@@ -1462,7 +1587,24 @@ export default function App() {
         </main>
       )}
 
-      {phase === "gameEnd" && snapshot && game !== "passthepen" && game !== "undercover" && game !== "fakeartist" && (
+      {phase === "gameEnd" && snapshot && game === "wavelength" && (
+        <main className="center">
+          <section className="result-panel wide">
+            <p className="eyebrow">{snapshot.lang === "zh" ? "心有灵序" : "In Sync"}</p>
+            <h1>{snapshot.lang === "zh" ? "本局已结束" : "Game ended"}</h1>
+            <p className="muted">
+              {snapshot.lang === "zh" ? "回到大厅，等大家重新加入吧。" : "Head back to the lobby and gather everyone again."}
+            </p>
+            {host && (
+              <button className="primary" onClick={() => send("reset")}>
+                {snapshot.lang === "zh" ? "回到大厅" : "Back to lobby"}
+              </button>
+            )}
+          </section>
+        </main>
+      )}
+
+      {phase === "gameEnd" && snapshot && game !== "passthepen" && game !== "undercover" && game !== "fakeartist" && game !== "wavelength" && (
         <main className="center">
           <section className="result-panel wide">
             <p className="eyebrow">Winner</p>
@@ -1618,7 +1760,13 @@ function DrawingBoard({
   const pointsRef = useRef<Array<{ x: number; y: number }>>([]);
   const drawingRef = useRef(false);
   const [color, setColor] = useState("#15191f");
-  const [width, setWidth] = useState(6);
+  const [tool, setTool] = useState<"pen" | "eraser">("pen");
+  const activeColor = tool === "eraser" ? "#ffffff" : color;
+  const activeWidth = tool === "eraser" ? 18 : 6;
+
+  useEffect(() => {
+    if (disabled) setTool("pen");
+  }, [disabled]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -1650,8 +1798,8 @@ function DrawingBoard({
     };
 
     strokes.forEach(renderStroke);
-    if (pointsRef.current.length) renderStroke({ color, width, points: pointsRef.current });
-  }, [color, strokes, width]);
+    if (pointsRef.current.length) renderStroke({ color: activeColor, width: activeWidth, points: pointsRef.current });
+  }, [activeColor, activeWidth, strokes]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1684,7 +1832,7 @@ function DrawingBoard({
   }
 
   function start(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (disabled) return;
+    if (disabled || (tool === "eraser" && strokes.length === 0)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     drawingRef.current = true;
     pointsRef.current = [point(event)];
@@ -1702,41 +1850,50 @@ function DrawingBoard({
     drawingRef.current = false;
     const points = pointsRef.current;
     pointsRef.current = [];
-    if (points.length) onChange([...strokes, { color, width, points }]);
+    if (points.length) onChange([...strokes, { color: activeColor, width: activeWidth, points }]);
   }
 
   const canUndo = !disabled && strokes.length > minStrokes;
 
   return (
-    <div className="board">
+    <div className={disabled ? "board is-disabled" : "board"}>
       <div className="tools">
         <div>
           {["#15191f", "#e0576f", "#4f7cff", "#18a67d", "#f4c542"].map((item) => (
             <button
               key={item}
-              className={item === color ? "tool-color active" : "tool-color"}
+              className={tool === "pen" && item === color ? "tool-color active" : "tool-color"}
               style={{ background: item }}
               disabled={disabled}
-              onClick={() => setColor(item)}
+              onClick={() => {
+                setColor(item);
+                setTool("pen");
+              }}
             />
           ))}
+          <button
+            className={tool === "eraser" ? "tool-color eraser-tool active" : "tool-color eraser-tool"}
+            disabled={disabled || !strokes.length}
+            onClick={() => setTool("eraser")}
+            aria-label="Eraser"
+            title="Eraser"
+          >
+            🧽
+          </button>
         </div>
         <div>
-          {[4, 8, 14].map((item) => (
-            <button
-              key={item}
-              className={item === width ? "tool-size active" : "tool-size"}
-              disabled={disabled}
-              onClick={() => setWidth(item)}
-            >
-              {item}
-            </button>
-          ))}
           <button className="secondary small" disabled={!canUndo} onClick={() => onChange(strokes.slice(0, -1))}>
             Undo
           </button>
           {!relay && (
-            <button className="secondary small" disabled={disabled || !strokes.length} onClick={() => onChange([])}>
+            <button
+              className="secondary small"
+              disabled={disabled || !strokes.length}
+              onClick={() => {
+                onChange([]);
+                setTool("pen");
+              }}
+            >
               Clear
             </button>
           )}

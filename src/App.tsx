@@ -937,7 +937,7 @@ export default function App() {
           <section className="settings">
             {!host && <p className="settings-note">{hostOnlySettings}</p>}
             <SettingGroup title="Game">
-              {(["classic", "passthepen", "yarnpals", "undercover", "wavelength", "fakeartist", "telephone", "punchline", "balderdash"] as const).map((option) => (
+              {(["classic", "passthepen", "undercover", "wavelength", "fakeartist", "telephone", "punchline", "balderdash"] as const).map((option) => (
                 <button
                   key={option}
                   className={snapshot.game === option ? "chip active" : "chip"}

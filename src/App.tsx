@@ -283,6 +283,14 @@ function setRoomInUrl(code: string): void {
   window.history.replaceState(null, "", url);
 }
 
+function roomFromUrl(): string {
+  try {
+    return (new URLSearchParams(window.location.search).get("room") ?? "").toUpperCase().slice(0, 8);
+  } catch {
+    return "";
+  }
+}
+
 function roomCode(): string {
   const bytes = new Uint8Array(5);
   crypto.getRandomValues(bytes);
@@ -295,6 +303,10 @@ function socketBase(): string {
     return "ws://localhost:8787";
   }
   return `${protocol === "https:" ? "wss:" : "ws:"}//${host}`;
+}
+
+function apiBase(): string {
+  return socketBase().replace(/^ws/, "http");
 }
 
 function parseMessage(value: string): ServerMessage | null {
@@ -331,13 +343,11 @@ export default function App() {
   const [name, setName] = useState(() => localStorage.getItem("fresh_game_name") ?? "");
   const [color, setColor] = useState(() => localStorage.getItem("fresh_game_color") ?? COLORS[0]);
   const [lang, setLang] = useState<"en" | "zh">(() => (localStorage.getItem("fresh_game_lang") === "zh" ? "zh" : "en"));
-  const [joinCode, setJoinCode] = useState(() => {
-    try {
-      return (new URLSearchParams(window.location.search).get("room") ?? "").toUpperCase().slice(0, 8);
-    } catch {
-      return "";
-    }
-  });
+  const [inviteEntryCode, setInviteEntryCode] = useState(roomFromUrl);
+  const [joinCode, setJoinCode] = useState(inviteEntryCode);
+  const [invitePreview, setInvitePreview] = useState<
+    { status: "loading" | "ready" | "unavailable"; hostName: string }
+  >({ status: inviteEntryCode ? "loading" : "unavailable", hostName: "" });
   const [room, setRoom] = useState("");
   const [phase, setPhase] = useState<Phase>("landing");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -380,6 +390,7 @@ export default function App() {
         ? 3
         : 2;
   const hasJoinCode = joinCode.trim().length > 0;
+  const openedFromInviteLink = inviteEntryCode.length > 0;
   const sorted = useMemo(
     () => [...players].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
     [players],
@@ -534,6 +545,8 @@ export default function App() {
           clearRoomSession(cleanCode);
           delete roomSessionsRef.current[cleanCode];
           setRoomInUrl("");
+          setInviteEntryCode("");
+          setJoinCode("");
           setId("");
           showNotice(message.payload.message);
           setSnapshot(null);
@@ -591,6 +604,31 @@ export default function App() {
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
+
+  useEffect(() => {
+    if (!inviteEntryCode) return;
+
+    const controller = new AbortController();
+    setInvitePreview({ status: "loading", hostName: "" });
+    void fetch(`${apiBase()}/room/${encodeURIComponent(inviteEntryCode)}/preview`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Room unavailable");
+        const preview = (await response.json()) as unknown;
+        if (!preview || typeof preview !== "object" || !("hostName" in preview) || typeof preview.hostName !== "string") {
+          throw new Error("Invalid room preview");
+        }
+        setInvitePreview({ status: "ready", hostName: preview.hostName });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setInvitePreview({ status: "unavailable", hostName: "" });
+      });
+
+    return () => controller.abort();
+  }, [inviteEntryCode]);
 
   useEffect(() => {
     return () => {
@@ -701,6 +739,8 @@ export default function App() {
     if (room) clearRoomSession(room);
     if (room) delete roomSessionsRef.current[room];
     setRoomInUrl("");
+    setInviteEntryCode("");
+    setJoinCode("");
     setId("");
     setSnapshot(null);
     setRoom("");
@@ -757,7 +797,11 @@ export default function App() {
         <main className="entry">
           <section className="entry-panel">
             <h1>Game Night</h1>
-            <p className="entry-sub">Pick a name and color, then start a room or join a friend&apos;s with their code.</p>
+            <p className="entry-sub">
+              {openedFromInviteLink
+                ? "You've been invited. Pick a name and color, then join the room."
+                : "Pick a name and color, then start a room or join a friend's with their code."}
+            </p>
 
             <label>
               Your name
@@ -792,56 +836,62 @@ export default function App() {
               <span>{name.trim() || "That's you"}</span>
             </div>
 
-            <div className={`field ${hasJoinCode ? "is-dimmed" : ""}`}>
-              <span className="field-label">
-                Game language{hasJoinCode ? " · set by the room's host" : ""}
-              </span>
-              <div className="chips">
-                <button
-                  className={lang === "en" ? "chip active" : "chip"}
-                  disabled={hasJoinCode}
-                  onClick={() => setLang("en")}
-                >
-                  English
-                </button>
-                <button
-                  className={lang === "zh" ? "chip active" : "chip"}
-                  disabled={hasJoinCode}
-                  onClick={() => setLang("zh")}
-                >
-                  中文
-                </button>
+            {!hasJoinCode && (
+              <div className="field">
+                <span className="field-label">Game language</span>
+                <div className="chips">
+                  <button className={lang === "en" ? "chip active" : "chip"} onClick={() => setLang("en")}>
+                    English
+                  </button>
+                  <button className={lang === "zh" ? "chip active" : "chip"} onClick={() => setLang("zh")}>
+                    中文
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
-            <button
-              className={`block create-btn ${hasJoinCode ? "secondary is-dimmed" : "primary"}`}
-              onClick={createRoom}
-            >
-              Create a room
-            </button>
-
-            <div className="or-divider">
-              <span>or</span>
-            </div>
-
-            <div className="join-box">
-              <span className="field-label">Join with a code</span>
-              <div className="join-line">
-                <input
-                  value={joinCode}
-                  onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") joinRoom();
-                  }}
-                  maxLength={8}
-                  placeholder="ABCDE"
-                />
-                <button className={hasJoinCode ? "primary" : "secondary is-dimmed"} onClick={joinRoom}>
-                  Join
+            {!openedFromInviteLink && (
+              <>
+                <button
+                  className={`block create-btn ${hasJoinCode ? "secondary is-dimmed" : "primary"}`}
+                  onClick={createRoom}
+                >
+                  Create a room
                 </button>
+
+                <div className="or-divider">
+                  <span>or</span>
+                </div>
+              </>
+            )}
+
+            {openedFromInviteLink ? (
+              <button className="primary block" onClick={joinRoom} disabled={invitePreview.status !== "ready"}>
+                {invitePreview.status === "loading"
+                  ? "Checking room…"
+                  : invitePreview.status === "ready"
+                    ? `Join ${invitePreview.hostName}'s room`
+                    : "Room unavailable"}
+              </button>
+            ) : (
+              <div className="join-box">
+                <span className="field-label">Join with a code</span>
+                <div className="join-line">
+                  <input
+                    value={joinCode}
+                    onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") joinRoom();
+                    }}
+                    maxLength={8}
+                    placeholder="ABCDE"
+                  />
+                  <button className={hasJoinCode ? "primary" : "secondary is-dimmed"} onClick={joinRoom}>
+                    Join
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </section>
         </main>
       )}

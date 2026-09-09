@@ -1142,6 +1142,31 @@ export class GameRoom extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  async preview(): Promise<{ hostName: string } | null> {
+    const stateTable = this.ctx.storage.sql
+      .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'state' LIMIT 1")
+      .toArray()[0];
+    if (!stateTable) return null;
+
+    const row = this.ctx.storage.sql
+      .exec<{ body: string }>("SELECT body FROM state WHERE id = ?", "room")
+      .toArray()[0];
+    if (!row) return null;
+
+    try {
+      const state = JSON.parse(row.body) as unknown;
+      if (!isRecord(state) || typeof state.createdAt !== "number" || state.createdAt === 0 || !Array.isArray(state.players)) {
+        return null;
+      }
+      const host = state.players.find(
+        (player): player is Record<string, unknown> => isRecord(player) && player.host === true,
+      );
+      return host && typeof host.name === "string" ? { hostName: asText(host.name, "Host", 18) } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const raw = typeof message === "string" ? message : new TextDecoder().decode(message);
     let command: ClientCommand;
@@ -4079,10 +4104,26 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const match = url.pathname.match(/^\/room\/([A-Z0-9]{3,8})\/ws$/);
+    const previewMatch = url.pathname.match(/^\/room\/([A-Z0-9]{3,8})\/preview$/);
 
     if (match) {
       const room = env.ROOMS.getByName(match[1]);
       return room.fetch(request);
+    }
+
+    if (previewMatch) {
+      if (request.method !== "GET") {
+        return Response.json({ error: "Method not allowed." }, { status: 405, headers: { Allow: "GET" } });
+      }
+      const room = env.ROOMS.getByName(previewMatch[1]);
+      const preview = await room.preview();
+      const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-store",
+      };
+      return preview
+        ? Response.json(preview, { headers })
+        : Response.json({ error: "Room not found." }, { status: 404, headers });
     }
 
     if (url.pathname === "/health") {

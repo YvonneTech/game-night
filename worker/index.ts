@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -49,6 +49,8 @@ type Round = {
   turnSeconds?: number;
   turnStrokeStart?: number;
   guessWindow?: boolean;
+  // Emoji game: performer describes word with emojis only
+  emojiClue?: string;
 };
 
 type Message = {
@@ -375,6 +377,8 @@ type Snapshot = Omit<
   youDraw: boolean;
   youGuess: boolean;
   relay: RelaySnapshot | null;
+  emojiClue: string | null;
+  needsClue: boolean;
 };
 
 const ROUND_SECONDS = 60;
@@ -389,6 +393,74 @@ const BD_DEFINE_SECONDS = 60;
 const BD_VOTE_SECONDS = 30;
 const BD_REVEAL_SECONDS = 8;
 const BD_ROUNDS = 3;
+
+function isEmojiOnly(input: string): boolean {
+  const s = input.trim();
+  if (!s) return false;
+  const noSpace = s.replace(/\s+/g, "");
+  if (!noSpace) return false;
+  let graphemes: string[];
+  try {
+    const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    graphemes = Array.from(seg.segment(noSpace), (x) => x.segment);
+  } catch {
+    graphemes = Array.from(noSpace);
+  }
+  if (graphemes.length === 0 || graphemes.length > 30) return false;
+  const keycapRe = /^[0-9#*]\uFE0F?\u20E3$/;
+  for (const g of graphemes) {
+    if (keycapRe.test(g)) continue;
+    const hasPict = /\p{Extended_Pictographic}/u.test(g);
+    const hasEmojiVS = /\uFE0F/.test(g) && /\p{Emoji}/u.test(g);
+    if (!hasPict && !hasEmojiVS) return false;
+    if (/[\p{L}\p{N}]/u.test(g)) return false;
+  }
+  return true;
+}
+
+// Emoji game: EN = movies, ZH = 成语. Keep lists modest for v1.
+const EMOJI_WORDS: Record<Lang, string[]> = {
+  en: [
+    "Titanic", "Jaws", "Frozen", "Avatar", "Inception", "The Lion King", "Harry Potter",
+    "Star Wars", "Jurassic Park", "The Godfather", "Forrest Gump", "Spider-Man",
+    "The Avengers", "Toy Story", "Finding Nemo", "The Matrix", "Gladiator",
+    "Pirates of the Caribbean", "King Kong", "Godzilla", "Batman", "Superman",
+    "Iron Man", "Black Panther", "Wonder Woman", "The Dark Knight", "Coco",
+    "Up", "Wall-E", "Shrek", "Kung Fu Panda", "Despicable Me", "Minions",
+    "The Little Mermaid", "Beauty and the Beast", "Aladdin", "Mulan", "Cinderella",
+    "Snow White", "Sleeping Beauty", "Pinocchio", "Dumbo",
+  ],
+  zh: [
+    "守株待兔", "掩耳盗铃", "亡羊补牢", "井底之蛙", "对牛弹琴",
+    "指鹿为马", "刻舟求剑", "卧薪尝胆", "破釜沉舟", "四面楚歌", "草木皆兵",
+    "打草惊蛇", "画饼充饥", "望梅止渴", "杯弓蛇影", "狐假虎威",
+    "拔苗助长", "滥竽充数", "叶公好龙", "自相矛盾", "坐井观天",
+    "胸有成竹", "一箭双雕", "一石二鸟", "九牛一毛", "百发百中", "千钧一发",
+    "万马奔腾", "龙马精神", "虎虎生威", "鸡飞狗跳", "狗急跳墙", "兔死狐悲",
+    "狐朋狗友", "狼吞虎咽", "龙飞凤舞", "凤毛麟角", "鹤立鸡群",
+    "一目了然", "三心二意", "五颜六色", "七上八下", "八仙过海", "九死一生", "十全十美",
+    "东山再起", "南辕北辙", "左顾右盼", "马到成功", "鸡犬不宁", "龙争虎斗",
+    "火眼金睛", "风雨同舟", "花好月圆", "一帆风顺", "一鸣惊人", "三顾茅庐",
+    "张牙舞爪", "眉开眼笑", "手舞足蹈", "心花怒放", "杯水车薪", "水到渠成",
+    "纸上谈兵", "对症下药", "虎视眈眈", "龙潭虎穴", "羊入虎口", "鸡鸣狗盗",
+    "月黑风高", "星星之火", "日新月异", "四面八方", "五光十色", "鹤发童颜",
+    "落井下石", "瓜熟蒂落", "闻鸡起舞", "鸡毛蒜皮", "狗仗人势", "狼心狗肺",
+    "蛇蝎心肠", "马不停蹄", "一丝不苟", "一诺千金", "三令五申", "前赴后继",
+    "怒发冲冠", "水火不容", "雷厉风行", "电光火石", "一见钟情", "两全其美",
+    "三阳开泰", "四季平安", "五福临门", "六六大顺", "七星高照", "八方来财",
+    "九牛二虎", "十拿九稳",
+    "一马当先", "一触即发", "一落千丈", "一针见血", "二话不说",
+    "三生有幸", "四海一家", "五彩缤纷", "八面玲珑", "十万火急",
+    "东张西望", "春暖花开", "秋高气爽", "风和日丽", "雨过天晴",
+    "鸟语花香", "花前月下", "柳暗花明", "虎口余生", "狗尾续貂",
+    "鼠目寸光", "牛刀小试", "羊肠小道", "马首是瞻", "龙凤呈祥",
+    "鹏程万里", "鱼跃龙门", "眉飞色舞", "喜笑颜开", "泪流满面",
+    "心直口快", "大材小用", "小题大做", "半途而废", "一曝十寒",
+    "四通八达", "五脏六腑", "七嘴八舌", "十指连心", "东倒西歪",
+    "南腔北调", "左思右想", "前所未有", "春风得意", "夏虫语冰",
+    "秋收冬藏", "冬日暖阳", "风吹草动", "雨后春笋",
+  ],
+};
 
 // Punchline prompts — open, silly fill-in-the-blanks. Everyone answers the same one each
 // round, so they're deliberately broad enough for lots of different funny answers.
@@ -1375,6 +1447,9 @@ export class GameRoom extends DurableObject<Env> {
       case "bdHint":
         await this.bdHint(ws);
         break;
+      case "emSubmit":
+        await this.emSubmit(ws, command.payload);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -1687,7 +1762,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "fakeartist" ||
       payload.game === "telephone" ||
       payload.game === "punchline" ||
-      payload.game === "balderdash"
+      payload.game === "balderdash" ||
+      payload.game === "emoji"
     ) {
       state.game = payload.game;
     }
@@ -3088,15 +3164,17 @@ export class GameRoom extends DurableObject<Env> {
 
     state.phase = "playing";
     state.strokes = [];
+    const isEmoji = state.game === "emoji";
     state.round = {
       ...state.round,
       word,
-      category: this.categoryOf(state.round.mode, state.lang, word),
+      category: isEmoji ? undefined : this.categoryOf(state.round.mode, state.lang, word),
       options: undefined,
       startedAt: Date.now(),
       hints: 0,
       correctIds: [],
       ended: false,
+      emojiClue: isEmoji ? undefined : state.round.emojiClue,
     };
     state.players = state.players.map((player) => ({
       ...player,
@@ -3105,6 +3183,27 @@ export class GameRoom extends DurableObject<Env> {
       guessRank: undefined,
     }));
     this.system(state, `${this.performerName(state)} is up`);
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private async emSubmit(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    if (!session || state.game !== "emoji" || state.phase !== "playing" || !state.round?.word) return;
+    if (state.round.performerId !== session.playerId) return;
+    if (state.round.emojiClue) return;
+    if (!isRecord(payload)) return;
+    const clue = asText(payload.clue, "", 80);
+    if (!isEmojiOnly(clue)) {
+      this.error(ws, state.lang === "zh" ? "只能输入表情符号" : "Emojis only");
+      return;
+    }
+    state.round.emojiClue = clue;
+    state.round.startedAt = Date.now();
+    state.round.hints = 0;
+    this.system(state, state.lang === "zh" ? "表情已发布 — 开始猜!" : "Emoji clue posted — start guessing!");
     this.save(state);
     await this.schedule(state);
     this.broadcast(state);
@@ -3156,6 +3255,7 @@ export class GameRoom extends DurableObject<Env> {
     const session = this.session(ws);
     const state = this.load();
     if (!session || state.phase !== "playing" || !state.round?.word || !isRecord(payload)) return;
+    if (state.game === "emoji" && !state.round.emojiClue) return;
 
     const player = state.players.find((item) => item.id === session.playerId);
     if (!player) return;
@@ -3622,25 +3722,42 @@ export class GameRoom extends DurableObject<Env> {
 
   private makeRound(state: RoomState, number: number): Round {
     const mode: RoundMode =
-      state.mode === "mixed"
-        ? crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0
-          ? "pictionary"
-          : "charades"
-        : state.mode;
+      state.game === "emoji"
+        ? "pictionary"
+        : state.mode === "mixed"
+          ? crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0
+            ? "pictionary"
+            : "charades"
+          : state.mode;
     const performer = state.players[(number - 1) % state.players.length];
+    const options = state.game === "emoji" ? this.emojiWordOptions(state.lang) : this.wordOptions(mode, state.lang);
     return {
       number,
       total: state.rounds,
       mode,
       performerId: performer.id,
       word: "",
-      options: this.wordOptions(mode, state.lang),
+      options,
       startedAt: 0,
       durationSeconds: ROUND_SECONDS,
       hints: 0,
       correctIds: [],
       ended: false,
+      emojiClue: undefined,
     };
+  }
+
+  private emojiWordOptions(lang: Lang): string[] {
+    const pool = EMOJI_WORDS[lang];
+    const picks: string[] = [];
+    const used = new Set<number>();
+    while (picks.length < 3 && used.size < pool.length) {
+      const i = crypto.getRandomValues(new Uint32Array(1))[0] % pool.length;
+      if (used.has(i)) continue;
+      used.add(i);
+      picks.push(pool[i]);
+    }
+    return picks;
   }
 
   private makeRelayRound(state: RoomState, number: number): Round {
@@ -3834,11 +3951,28 @@ export class GameRoom extends DurableObject<Env> {
     let hiddenWord = "";
     let wordLength = 0;
     let relay: RelaySnapshot | null = null;
+    let emojiClue: string | null = null;
+    let needsClue = false;
 
     if (round) {
       wordLength = round.word.replaceAll(" ", "").length;
 
-      if (state.game === "passthepen") {
+      if (state.game === "emoji") {
+        const clue = round.emojiClue ?? null;
+        emojiClue = clue;
+        needsClue = isPerformer && !clue && state.phase === "playing";
+        seeWord = isPerformer;
+        youDraw = false;
+        youGuess = !isPerformer && !!clue && state.phase === "playing";
+        if (!isPerformer && state.phase === "choosing") round.options = [];
+        if (!isPerformer && state.phase === "playing") {
+          hiddenWord = "";
+          round.word = "";
+          round.options = undefined;
+          // keep emojiClue visible
+        }
+        // performer sees word, others see emojiClue
+      } else if (state.game === "passthepen") {
         const isGuesser = round.performerId === playerId;
         seeWord = !isGuesser;
         youGuess = isGuesser && state.phase === "playing";
@@ -3899,6 +4033,8 @@ export class GameRoom extends DurableObject<Env> {
       youDraw,
       youGuess,
       relay,
+      emojiClue,
+      needsClue,
     };
   }
 

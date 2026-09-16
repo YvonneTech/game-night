@@ -1009,6 +1009,8 @@ canvas {
     font-size: 11px;
   }
   .classic-play > .chat, .relay-play > .chat { display: none; }
+  .emoji-play > .chat { display: flex !important; }
+  .emoji-play .mobile-guess-dock { display: none !important; }
   .mobile-guess-dock {
     display: flex;
     flex-direction: row;
@@ -1034,8 +1036,9 @@ canvas {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    max-height: 132px;
+    overflow-y: auto;
   }
-  .mobile-guess-preview .message:first-child:not(:last-child) { display: none; }
   .mobile-guess-preview .message,
   .mobile-guesses-list .message {
     border-left: 3px solid var(--line);
@@ -1045,8 +1048,10 @@ canvas {
   }
   .mobile-guess-preview .message {
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
   }
   .mobile-guess-preview .message.correct,
   .mobile-guesses-list .message.correct { border-color: var(--green); background: #dff5ee; }

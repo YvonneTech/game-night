@@ -229,18 +229,6 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
               >
                 {s.name}
               </strong>
-              <span
-                className="muted"
-                style={{
-                  fontSize: 11,
-                  maxWidth: "100%",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {s.taboo.text}
-              </span>
               <span className="muted" style={{ fontSize: 11, whiteSpace: "nowrap" }}>
                 😳 {s.strikes} · 🎯 {s.catches}
               </span>
@@ -298,7 +286,6 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
                   >
                     {s.name}
                   </strong>
-                  <span className="muted" style={{ fontSize: 12 }}>{s.taboo.text}</span>
                 </div>
                 <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap", flexShrink: 0 }}>
                   😳 {s.strikes} · 🎯 {s.catches}

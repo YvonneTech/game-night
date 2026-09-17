@@ -210,6 +210,7 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
               className="tp-reveal-item"
               style={{
                 display: "flex",
+                flexDirection: "row",
                 alignItems: "center",
                 gap: 10,
                 padding: "8px 12px",

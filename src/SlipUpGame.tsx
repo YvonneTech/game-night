@@ -199,8 +199,11 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
           🏆 <strong>{winners.join(" & ")}</strong>
           {` · ${fewest} ${zh ? "次被抓" : fewest === 1 ? "slip" : "slips"}`}
         </p>
+        <p className="muted" style={{ textAlign: "right", margin: "-2px 4px 0", fontSize: 11 }}>
+          😳 {zh ? "被抓" : "slips"} · 🎯 {zh ? "抓人" : "catches"}
+        </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {scores.map((s, i) => (
             <div
               key={s.id}
@@ -208,23 +211,34 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
-                padding: "5px 10px",
+                gap: 10,
+                padding: "8px 12px",
                 borderLeft: `4px solid ${s.color}`,
-                ...(i === 0 ? { outline: "2px solid var(--strong)", borderRadius: 8 } : {}),
+                ...(i === 0
+                  ? { outline: "2px solid var(--strong)", borderRadius: 8, background: "var(--panel-2)" }
+                  : {}),
               }}
             >
-              <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <strong style={{ color: s.color }}>
-                  {i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : `${i + 1}. `}
+              <span style={{ fontSize: i < 3 ? 24 : 15, width: 28, textAlign: "center", flexShrink: 0 }}>
+                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <strong
+                  style={{
+                    color: s.color,
+                    fontSize: 17,
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {s.name}
                 </strong>
-                <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
-                  {s.taboo.text}
-                </span>
+                <span className="muted" style={{ fontSize: 12 }}>{s.taboo.text}</span>
               </div>
-              <span className="tp-step-tag" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
-                😳{s.strikes} · 🎯{s.catches}
+              <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap", flexShrink: 0 }}>
+                😳 {s.strikes} · 🎯 {s.catches}
               </span>
             </div>
           ))}

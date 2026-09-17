@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -97,6 +97,7 @@ type RoomState = {
   telephone: TPState | null;
   punchline: PLState | null;
   balderdash: BDState | null;
+  slipup: SUState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -350,6 +351,42 @@ type BDView = {
   scores: Array<{ name: string; score: number }> | null;
 };
 
+// Slip Up (说漏嘴): a same-room, phone-as-referee party game. Everyone gets a
+// secret taboo — a word they can't say or an action they can't do — visible to
+// EVERYONE ELSE but not to themselves. Players bait each other into slipping;
+// the instant someone slips, anyone taps to catch them, which strikes the
+// culprit and refreshes their taboo. Fewest slip-ups when time runs out wins.
+type SUTaboo = { text: string; kind: "word" | "action" };
+type SUState = {
+  sub: "play" | "reveal";
+  order: string[]; // fixed roster (players present at start)
+  taboos: Record<string, SUTaboo>; // playerId -> current taboo
+  strikes: Record<string, number>; // playerId -> times caught (slip-ups)
+  catches: Record<string, number>; // playerId -> times they caught someone
+  lastCaughtAt: Record<string, number>; // playerId -> ts of last catch (debounce)
+  deck: SUTaboo[]; // shuffled pool, reused with reshuffle when exhausted
+  deckCursor: number;
+  startedAt: number;
+  endsAt: number;
+  durationSeconds: number;
+  log: Array<{ culpritId: string; catcherId: string; taboo: SUTaboo; at: number }>;
+};
+
+type SUOpponentView = { id: string; name: string; color: string; connected: boolean; taboo: SUTaboo; strikes: number };
+type SUView = {
+  sub: "play" | "reveal";
+  endsAt: number;
+  durationSeconds: number;
+  timeLeft: number;
+  myStrikes: number;
+  myCatches: number;
+  isSpectator: boolean;
+  opponents: SUOpponentView[] | null; // play phase: everyone but me, with their taboos
+  scores: Array<{ id: string; name: string; color: string; taboo: SUTaboo; strikes: number; catches: number }> | null; // reveal only, ranked
+  myTaboo: SUTaboo | null; // reveal only — finally learn what yours was
+  recap: Array<{ culprit: string; catcher: string; text: string; kind: "word" | "action" }> | null;
+};
+
 type Snapshot = Omit<
   RoomState,
   | "players"
@@ -359,6 +396,7 @@ type Snapshot = Omit<
   | "telephone"
   | "punchline"
   | "balderdash"
+  | "slipup"
   | "telephoneInspirationCursor"
   | "telephoneInspirationOffset"
 > & {
@@ -369,6 +407,7 @@ type Snapshot = Omit<
   telephone: TPView | null;
   punchline: PLView | null;
   balderdash: BDView | null;
+  slipup: SUView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -393,6 +432,8 @@ const BD_DEFINE_SECONDS = 60;
 const BD_VOTE_SECONDS = 30;
 const BD_REVEAL_SECONDS = 8;
 const BD_ROUNDS = 3;
+const SU_DURATION_SECONDS = 180; // one continuous timed round
+const SU_CATCH_COOLDOWN_MS = 1500; // ignore repeat catches on the same slip
 
 function isEmojiOnly(input: string): boolean {
   const s = input.trim();
@@ -1052,6 +1093,81 @@ const YARN_TEAM_COLORS: [string[], string[]] = [
 ];
 const YARN_BOT_NAMES = ["Momo", "Mimi", "Berry", "Bubu", "Nori", "Pud", "Tofu", "Kiki"];
 
+// Slip Up: forbidden WORDS are everyday conversational glue that naturally comes
+// up, so opponents can bait you into it. Forbidden ACTIONS are things others can
+// clearly observe you doing.
+const SU_WORDS: Record<Lang, string[]> = {
+  en: [
+    "yes", "no", "why", "but", "cool", "actually", "like", "you", "know", "really",
+    "what", "okay", "nice", "sorry", "wait", "maybe", "think", "good", "seriously",
+    "obviously", "literally", "basically", "whatever", "hungry", "tired", "funny",
+    "love", "hate", "money", "time", "game", "phone", "name", "please", "thanks",
+    "weird", "boring", "crazy", "sure", "then", "so", "because", "right", "definitely",
+    "honestly", "probably", "guess", "mean", "feel", "want", "need", "remember",
+    "forget", "work", "home", "friend", "people", "everyone", "nothing", "something",
+    "always", "never", "today", "tonight", "tomorrow", "water", "food", "coffee",
+    "drink", "happy", "angry", "scared", "excited", "awesome", "terrible", "amazing",
+    "stupid", "smart", "lucky", "win", "lose", "question", "answer", "story", "secret",
+    "true", "cute", "old", "young", "fast", "slow", "hot", "cold", "big", "small",
+    "haha", "oops", "dude", "bro", "totally", "kind of", "no way", "for real",
+    "sleep", "eat", "walk", "run", "talk", "listen", "watch", "read", "buy",
+    "call", "text", "school", "job", "boss", "team", "party", "music", "movie",
+    "book", "car", "dog", "cat", "family", "kid", "baby", "next", "last", "first",
+    "best", "worst", "more", "less", "again", "still", "already", "almost",
+    "pretty", "super", "yeah", "nope", "fine", "great", "bad", "help", "stop", "wow",
+  ],
+  zh: [
+    "对", "不", "为什么", "但是", "好", "其实", "就", "你", "知道", "真的",
+    "什么", "行", "不错", "对不起", "等等", "也许", "觉得", "厉害", "认真",
+    "明显", "基本上", "无所谓", "饿", "累", "好笑", "喜欢", "讨厌", "钱",
+    "时间", "游戏", "手机", "名字", "谢谢", "奇怪", "无聊", "疯了", "当然",
+    "然后", "所以", "因为", "老实说", "可能", "应该", "记得", "忘了", "想",
+    "需要", "朋友", "大家", "没事", "一定", "从来", "今天", "明天", "晚上",
+    "水", "吃饭", "咖啡", "喝", "开心", "生气", "害怕", "兴奋", "太棒了",
+    "糟糕", "惊人", "笨", "聪明", "幸运", "赢", "输", "问题", "答案", "故事",
+    "秘密", "是的", "哈哈", "哎呀", "加油", "可爱", "快", "慢", "热", "冷",
+    "大", "小", "老", "帅", "漂亮", "真是的", "不会吧", "有点", "反正", "而且",
+    "睡觉", "吃", "走", "跑", "聊天", "听", "看", "读", "买", "打电话", "发消息",
+    "学校", "上班", "老板", "团队", "派对", "音乐", "电影", "书", "车", "狗", "猫",
+    "家人", "孩子", "宝宝", "下次", "上次", "第一", "最好", "最差", "更", "又", "还",
+    "已经", "差不多", "挺", "超级", "哇", "是啊", "不要", "好吧", "坏", "帮忙", "停",
+    "走开",
+  ],
+};
+const SU_ACTIONS: Record<Lang, string[]> = {
+  en: [
+    "cross your arms", "touch your face", "laugh out loud", "point at someone",
+    "say someone's name", "cross your legs", "scratch your head", "clap your hands",
+    "wave your hand", "stand up", "shrug", "nod your head", "cover your mouth",
+    "tuck your hair", "give a thumbs up", "lean back", "rub your eyes", "tap the table",
+    "cross your fingers", "wink at someone", "sigh loudly", "yawn", "stretch your arms",
+    "bite your nails", "raise your hand", "fix your collar", "snap your fingers",
+    "whistle", "high-five someone", "roll your eyes", "put your hands on your hips",
+    "lick your lips", "touch your nose", "play with your hair", "drum your fingers",
+    "look at the ceiling", "fold your hands", "blow a kiss", "do finger guns",
+    "count on your fingers", "rub your chin", "shake your head", "point at yourself",
+    "cover your eyes", "make a fist", "tilt your head",
+    "cover your ears", "point at the door", "touch your ear", "pat your cheek",
+    "make a heart with your hands", "salute", "facepalm", "lean forward",
+    "scratch your arm", "adjust your glasses", "bow your head", "point up",
+    "air-quote with your fingers", "rub your hands together", "clasp your hands",
+    "cross your ankles", "stick out your tongue", "raise your eyebrows",
+    "clear your throat", "crack your knuckles", "touch your neck", "pat your knee",
+  ],
+  zh: [
+    "交叉双臂", "摸脸", "大声笑", "指着别人", "叫别人的名字", "翘二郎腿",
+    "挠头", "拍手", "挥手", "站起来", "耸肩", "点头", "捂嘴",
+    "拨头发", "竖大拇指", "往后靠", "揉眼睛", "敲桌子", "眨眼", "叹气",
+    "打哈欠", "伸懒腰", "咬指甲", "举手", "打响指", "吹口哨", "和别人击掌",
+    "翻白眼", "双手叉腰", "舔嘴唇", "摸鼻子", "玩头发", "手指打节奏",
+    "抬头看天花板", "双手合十", "飞吻", "摇头", "摊手", "比心", "摸下巴",
+    "指自己", "捂眼睛", "握拳", "歪头",
+    "捂耳朵", "指着门", "摸耳朵", "拍脸颊", "敬礼", "捂脸", "身体前倾", "挠胳膊",
+    "扶眼镜", "低头", "比引号", "指上面", "搓手", "双手交握", "交叉脚踝", "吐舌头",
+    "挑眉", "清嗓子", "掰手指", "摸脖子", "拍膝盖",
+  ],
+};
+
 // Undercover: pairs of similar words. One side is the civilians' word, the other the undercover's.
 const UNDERCOVER_PAIRS: { en: [string, string][]; zh: [string, string][] } = {
   en: [
@@ -1450,6 +1566,15 @@ export class GameRoom extends DurableObject<Env> {
       case "emSubmit":
         await this.emSubmit(ws, command.payload);
         break;
+      case "suCatch":
+        await this.suCatch(ws, command.payload);
+        break;
+      case "suAddTime":
+        await this.suAddTime(ws);
+        break;
+      case "suEnd":
+        await this.suEnd(ws);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -1639,6 +1764,19 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    if (state.game === "slipup") {
+      const su = state.slipup;
+      if (su && su.sub === "play" && this.suTimeLeft(state) <= 0) {
+        this.suFinish(state);
+        this.save(state);
+        await this.schedule(state);
+        this.broadcast(state);
+      } else {
+        await this.schedule(state);
+      }
+      return;
+    }
+
     if (!state.round?.word) {
       await this.schedule(state);
       return;
@@ -1763,7 +1901,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "telephone" ||
       payload.game === "punchline" ||
       payload.game === "balderdash" ||
-      payload.game === "emoji"
+      payload.game === "emoji" ||
+      payload.game === "slipup"
     ) {
       state.game = payload.game;
     }
@@ -1791,7 +1930,8 @@ export class GameRoom extends DurableObject<Env> {
             state.game === "fakeartist" ||
             state.game === "telephone" ||
             state.game === "punchline" ||
-            state.game === "balderdash"
+            state.game === "balderdash" ||
+            state.game === "slipup"
           ? 3
           : 2;
     if (state.players.length < minPlayers) {
@@ -1841,6 +1981,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "balderdash") {
       await this.startBalderdash(state);
+      return;
+    }
+
+    if (state.game === "slipup") {
+      await this.startSlipUp(state);
       return;
     }
 
@@ -2875,6 +3020,210 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  // ---------- Slip Up (说漏嘴) ----------
+  private suPool(lang: Lang): SUTaboo[] {
+    const words: SUTaboo[] = SU_WORDS[lang].map((text) => ({ text, kind: "word" }));
+    const actions: SUTaboo[] = SU_ACTIONS[lang].map((text) => ({ text, kind: "action" }));
+    return this.suShuffle([...words, ...actions]);
+  }
+
+  private suShuffle(a: SUTaboo[]): SUTaboo[] {
+    const out = [...a];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+      const tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+    return out;
+  }
+
+  private suDrawTaboo(su: SUState, avoid?: SUTaboo): SUTaboo {
+    if (su.deckCursor >= su.deck.length) {
+      su.deck = this.suShuffle(su.deck);
+      su.deckCursor = 0;
+    }
+    let t = su.deck[su.deckCursor++];
+    // Avoid handing back the exact same taboo a player just had.
+    if (avoid && t.text === avoid.text && su.deckCursor < su.deck.length) {
+      t = su.deck[su.deckCursor++];
+    }
+    return t;
+  }
+
+  private async startSlipUp(state: RoomState): Promise<void> {
+    const order = state.players.map((p) => p.id);
+    const deck = this.suPool(state.lang);
+    const taboos: Record<string, SUTaboo> = {};
+    const strikes: Record<string, number> = {};
+    const catches: Record<string, number> = {};
+    const lastCaughtAt: Record<string, number> = {};
+    let cursor = 0;
+    for (const id of order) {
+      taboos[id] = deck[cursor % deck.length];
+      cursor += 1;
+      strikes[id] = 0;
+      catches[id] = 0;
+      lastCaughtAt[id] = 0;
+    }
+    const now = Date.now();
+    state.slipup = {
+      sub: "play",
+      order,
+      taboos,
+      strikes,
+      catches,
+      lastCaughtAt,
+      deck,
+      deckCursor: cursor,
+      startedAt: now,
+      endsAt: now + SU_DURATION_SECONDS * 1000,
+      durationSeconds: SU_DURATION_SECONDS,
+      log: [],
+    };
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? "说漏嘴开始 — 别说出/做出自己那张牌，想办法套别人说漏嘴！"
+        : "Slip Up started — don't say or do your own taboo, and bait everyone else into theirs!",
+    );
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private suTimeLeft(state: RoomState): number {
+    const su = state.slipup;
+    if (state.phase !== "playing" || state.game !== "slipup" || !su || su.sub !== "play") return 0;
+    return Math.max(0, Math.ceil((su.endsAt - Date.now()) / 1000));
+  }
+
+  private async suCatch(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const su = state.slipup;
+    if (!session || state.game !== "slipup" || !su || su.sub !== "play") return;
+    const catcherId = session.playerId;
+    if (su.order.indexOf(catcherId) < 0) return; // spectators can't catch
+    const targetId = isRecord(payload) ? asText(payload.targetId, "", 80) : "";
+    if (!targetId || targetId === catcherId || su.order.indexOf(targetId) < 0) return;
+    const target = state.players.find((p) => p.id === targetId);
+    if (!target || !target.connected) return;
+    const now = Date.now();
+    if (now - (su.lastCaughtAt[targetId] ?? 0) < SU_CATCH_COOLDOWN_MS) return; // debounce a single slip
+
+    const slipped = su.taboos[targetId];
+    su.strikes[targetId] = (su.strikes[targetId] ?? 0) + 1;
+    su.catches[catcherId] = (su.catches[catcherId] ?? 0) + 1;
+    su.lastCaughtAt[targetId] = now;
+    if (slipped) {
+      su.log.push({ culpritId: targetId, catcherId, taboo: slipped, at: now });
+      if (su.log.length > 40) su.log.splice(0, su.log.length - 40);
+    }
+    su.taboos[targetId] = this.suDrawTaboo(su, slipped);
+
+    const catcherName = this.playerName(state, catcherId);
+    const culpritName = this.playerName(state, targetId);
+    if (slipped) {
+      const what = slipped.kind === "word" ? `“${slipped.text}”` : slipped.text;
+      this.system(
+        state,
+        state.lang === "zh"
+          ? `${catcherName} 抓到 ${culpritName} ${slipped.kind === "word" ? "说了" : ""}${what}！`
+          : `${catcherName} caught ${culpritName} — ${what}!`,
+      );
+    }
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private async suAddTime(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const su = state.slipup;
+    if (!this.isHost(ws, state) || !su || su.sub !== "play") return;
+    su.endsAt += 60 * 1000;
+    this.system(state, state.lang === "zh" ? "房主加了 60 秒 ⏱" : "Host added 60s ⏱");
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private async suEnd(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const su = state.slipup;
+    if (!this.isHost(ws, state) || !su || su.sub !== "play") return;
+    this.suFinish(state);
+    this.save(state);
+    await this.schedule(state);
+    this.broadcast(state);
+  }
+
+  private suFinish(state: RoomState): void {
+    const su = state.slipup;
+    if (!su || su.sub !== "play") return;
+    su.sub = "reveal";
+    this.system(state, state.lang === "zh" ? "时间到！揭晓每个人的禁忌牌 👀" : "Time's up! Revealing everyone's taboos 👀");
+  }
+
+  private suView(state: RoomState, playerId?: string): SUView | null {
+    const su = state.slipup;
+    if (state.game !== "slipup" || !su) return null;
+    const isSpectator = !playerId || su.order.indexOf(playerId) < 0;
+    const nameOf = (id: string) => state.players.find((p) => p.id === id)?.name ?? "Player";
+    const colorOf = (id: string) => state.players.find((p) => p.id === id)?.color ?? "#888";
+    const connectedOf = (id: string) => state.players.find((p) => p.id === id)?.connected ?? false;
+
+    let opponents: SUOpponentView[] | null = null;
+    if (su.sub === "play") {
+      opponents = su.order
+        .filter((id) => id !== playerId && connectedOf(id))
+        .map((id) => ({
+          id,
+          name: nameOf(id),
+          color: colorOf(id),
+          connected: true,
+          taboo: su.taboos[id] ?? { text: "", kind: "word" },
+          strikes: su.strikes[id] ?? 0,
+        }));
+    }
+
+    let scores: SUView["scores"] = null;
+    let recap: SUView["recap"] = null;
+    if (su.sub === "reveal") {
+      // Only rank players still in the room (drop anyone who fully left mid-game).
+      scores = su.order
+        .filter((id) => state.players.some((p) => p.id === id))
+        .map((id) => ({
+          id,
+          name: nameOf(id),
+          color: colorOf(id),
+          taboo: su.taboos[id] ?? { text: "", kind: "word" },
+          strikes: su.strikes[id] ?? 0,
+          catches: su.catches[id] ?? 0,
+        }))
+        .sort((a, b) => a.strikes - b.strikes || b.catches - a.catches || a.name.localeCompare(b.name));
+      recap = [...su.log]
+        .reverse()
+        .map((e) => ({ culprit: nameOf(e.culpritId), catcher: nameOf(e.catcherId), text: e.taboo.text, kind: e.taboo.kind }));
+    }
+
+    return {
+      sub: su.sub,
+      endsAt: su.endsAt,
+      durationSeconds: su.durationSeconds,
+      timeLeft: this.suTimeLeft(state),
+      myStrikes: playerId ? su.strikes[playerId] ?? 0 : 0,
+      myCatches: playerId ? su.catches[playerId] ?? 0 : 0,
+      isSpectator,
+      opponents,
+      scores,
+      myTaboo: su.sub === "reveal" && playerId ? su.taboos[playerId] ?? null : null,
+      recap,
+    };
+  }
+
   // ---------- Undercover (谁是卧底) ----------
   private shuffleIds(ids: string[]): string[] {
     const a = [...ids];
@@ -3407,6 +3756,7 @@ export class GameRoom extends DurableObject<Env> {
     state.telephone = null;
     state.punchline = null;
     state.balderdash = null;
+    state.slipup = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -3871,6 +4221,11 @@ export class GameRoom extends DurableObject<Env> {
       return null;
     }
 
+    if (state.game === "slipup") {
+      const su = state.slipup;
+      return su?.sub === "play" ? su.endsAt : null;
+    }
+
     if (!state.round?.word) return null;
     const started = state.round.startedAt;
     const now = Date.now();
@@ -4025,6 +4380,7 @@ export class GameRoom extends DurableObject<Env> {
       telephone: this.tpView(state, playerId),
       punchline: this.plView(state, playerId),
       balderdash: this.bdView(state, playerId),
+      slipup: this.suView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -4113,6 +4469,9 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).balderdash === undefined) {
         parsed.balderdash = null;
       }
+      if ((parsed as unknown as Record<string, unknown>).slipup === undefined) {
+        parsed.slipup = null;
+      }
       if (parsed.phase === "lobby" && parsed.game === "classic" && parsed.mode === "mixed") {
         parsed.mode = "pictionary";
       }
@@ -4178,6 +4537,7 @@ export class GameRoom extends DurableObject<Env> {
       telephone: null,
       punchline: null,
       balderdash: null,
+      slipup: null,
       solved: 0,
       messages: [],
       strokes: [],

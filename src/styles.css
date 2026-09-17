@@ -659,6 +659,12 @@ canvas {
 .turn-timer.low { animation: turn-pulse 0.7s ease-in-out infinite; display: inline-block; }
 .relay-slot.current .relay-count { transition: color 0.2s ease; }
 
+@keyframes suSlipPop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 @media (max-width: 1040px) {
   .entry, .lobby, .play { grid-template-columns: 1fr; }
   .chat { max-height: none; }

@@ -6,8 +6,9 @@ import FakeArtistGame, { FAView } from "./FakeArtistGame";
 import TelephoneGame, { TPView } from "./TelephoneGame";
 import PunchlineGame, { PLView } from "./PunchlineGame";
 import BalderdashGame, { BDView } from "./BalderdashGame";
+import SlipUpGame, { SUView } from "./SlipUpGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup";
 
 function isEmojiOnly(input: string): boolean {
   const s = input.trim();
@@ -322,6 +323,7 @@ type Snapshot = {
   telephone: TPView | null;
   punchline: PLView | null;
   balderdash: BDView | null;
+  slipup: SUView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -370,6 +372,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     punchline: "Punchline",
     balderdash: "Balderdash",
     emoji: "Emoji Movie",
+    slipup: "Slip Up",
   },
   zh: {
     classic: "你画我猜",
@@ -382,6 +385,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     punchline: "神回复",
     balderdash: "胡说八道",
     emoji: "表情猜成语",
+    slipup: "说漏嘴",
   },
 };
 
@@ -400,6 +404,7 @@ const LOBBY_GAME_CHOICES = [
   { key: "wavelength", game: "wavelength" },
   { key: "balderdash", game: "balderdash" },
   { key: "emoji", game: "emoji" },
+  { key: "slipup", game: "slipup" },
 ] as const;
 
 const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: string }>> = {
@@ -451,6 +456,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "One player gets a secret movie and must describe it with emojis only. Everyone else races to guess it in chat.",
       scoring: "Guessers earn 100 / 80 / 60 / 40 / 20 by order; the performer earns +20 for each correct guess.",
     },
+    slipup: {
+      blurb:
+        "Best played in the same room. Everyone gets a secret taboo — a word you can't say or an action you can't do — that only OTHERS can see. Bait each other into slipping, and tap Caught! the instant they do. Needs 3+ players.",
+      scoring: "Fewest slip-ups when the timer runs out wins.",
+    },
   },
   zh: {
     classic: {
@@ -492,6 +502,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     emoji: {
       blurb: "一人抽到秘密成语，只能用表情符号来描述，其他人在聊天里抢答。",
       scoring: "猜对按先后得 100 / 80 / 60 / 40 / 20 分；出题人每被猜对一次 +20。",
+    },
+    slipup: {
+      blurb:
+        "最适合同处一室时玩。每人拿到一张秘密禁忌牌 —— 一个不能说的词，或一个不能做的动作 —— 只有别人看得到，你自己看不到。互相下套，一旦谁说漏嘴/做出来，立刻点「抓到！」。需 3 人以上。",
+      scoring: "时间到时被抓次数最少者获胜。",
     },
   },
 };
@@ -666,7 +681,8 @@ export default function App() {
           game === "fakeartist" ||
           game === "telephone" ||
           game === "punchline" ||
-          game === "balderdash"
+          game === "balderdash" ||
+          game === "slipup"
         ? 3
         : 2;
   const hasJoinCode = joinCode.trim().length > 0;
@@ -1288,7 +1304,8 @@ export default function App() {
               game !== "fakeartist" &&
               game !== "telephone" &&
               game !== "punchline" &&
-              game !== "balderdash" && (
+              game !== "balderdash" &&
+              game !== "slipup" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -1386,6 +1403,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.balderdash && game === "balderdash" && (
         <BalderdashGame view={snapshot.balderdash} myId={id} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.slipup && game === "slipup" && (
+        <SlipUpGame view={snapshot.slipup} myId={id} isHost={host} lang={snapshot.lang} send={send} />
       )}
 
       {phase === "choosing" && snapshot && round && (

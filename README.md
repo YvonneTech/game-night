@@ -1,6 +1,6 @@
 # Game Night
 
-Party games for 2-6 friends — **nine** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
+Party games for 2-6 friends — **ten** quick multiplayer mini-games, playable across devices via a shared room code. No sign-up, English or 中文.
 
 ## 🎮 Play it live
 
@@ -19,6 +19,7 @@ Create a room, share the invite link, and play together on your phones or laptop
 - **In Sync (心有灵序)** — everyone gets a secret number on the same spectrum, reveals a clue when ready, and places their card into the shared order before all numbers are flipped. No points. 3+ players.
 - **Balderdash (胡说八道)** — obscure word, fake definitions. Everyone invents a believable definition, then votes for the REAL one. +100 for spotting truth, +50 per fool. Host can reveal hints. 3+ players.
 - **Emoji Movie (表情猜成语)** — one player describes a secret movie (EN) / 成语 (中文) with emojis only, everyone else races to guess it.
+- **Slip Up (说漏嘴)** — best in the same room. Everyone gets a secret taboo (a word you can't say or an action you can't do) that only *others* can see. Bait each other into slipping, tap Caught! when they do; fewest slip-ups when the timer runs out wins. 3+ players.
 
 ### Temporarily retired
 

@@ -190,26 +190,16 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
   const winners = scores.filter((s) => s.strikes === fewest).map((s) => s.name);
 
   return (
-    <main className="center" style={{ maxWidth: 620 }}>
-      <section className="result-panel" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <main className="center" style={{ maxWidth: 560 }}>
+      <section className="result-panel" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <Header zh={zh} right={<span className="uc-round">{zh ? "揭晓" : "Reveal"}</span>} />
 
-        <p className="uc-status" style={{ textAlign: "center" }}>
-          🏆 {zh ? "嘴最严的是" : "Tightest lips"}: <strong>{winners.join(" & ")}</strong>
+        <p className="uc-status" style={{ textAlign: "center", margin: 0 }}>
+          🏆 <strong>{winners.join(" & ")}</strong>
           {` · ${fewest} ${zh ? "次被抓" : fewest === 1 ? "slip" : "slips"}`}
         </p>
 
-        {view.myTaboo && (
-          <p className="sb-prompt" style={{ textAlign: "center", fontSize: 18 }}>
-            {zh ? "你的禁忌牌是：" : "Your taboo was: "}
-            <strong>{view.myTaboo.text}</strong>
-            <span className="tp-step-tag" style={{ marginLeft: 8 }}>
-              {kindLabel(view.myTaboo.kind, zh)}
-            </span>
-          </p>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
           {scores.map((s, i) => (
             <div
               key={s.id}
@@ -217,32 +207,33 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 10,
-                borderLeft: `5px solid ${s.color}`,
-                ...(i === 0 ? { outline: "3px solid var(--strong)", borderRadius: 8 } : {}),
+                gap: 8,
+                padding: "5px 10px",
+                borderLeft: `4px solid ${s.color}`,
+                ...(i === 0 ? { outline: "2px solid var(--strong)", borderRadius: 8 } : {}),
               }}
             >
-              <span className="tp-step-tag" style={i < 3 ? { fontSize: 20 } : undefined}>
-                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong style={{ color: s.color }}>{s.name}</strong>
-                <span className="muted" style={{ marginLeft: 8, fontSize: 13 }}>
+              <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <strong style={{ color: s.color }}>
+                  {i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : `${i + 1}. `}
+                  {s.name}
+                </strong>
+                <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>
                   {s.taboo.text}
                 </span>
               </div>
-              <span className="tp-step-tag">
-                {zh ? "被抓" : "slips"} {s.strikes} · {zh ? "抓人" : "catches"} {s.catches}
+              <span className="tp-step-tag" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                😳{s.strikes} · 🎯{s.catches}
               </span>
             </div>
           ))}
         </div>
 
         {recap.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <p className="uc-status">{zh ? "精彩回放" : "Slip-up recap"}</p>
-            {recap.slice(0, 12).map((r, i) => (
-              <p key={i} className="tp-bubble" style={{ fontSize: 14, margin: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <p className="uc-status" style={{ margin: "4px 0 0" }}>{zh ? "精彩回放" : "Slip-up recap"}</p>
+            {recap.slice(0, 6).map((r, i) => (
+              <p key={i} className="tp-bubble" style={{ fontSize: 13, margin: 0 }}>
                 <strong>{r.catcher}</strong>
                 {zh ? " 抓到 " : " caught "}
                 <strong>{r.culprit}</strong>

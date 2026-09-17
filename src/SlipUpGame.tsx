@@ -186,6 +186,7 @@ function SUPlay({ view, isHost, zh, send }: { view: SUView; isHost: boolean; zh:
 function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; zh: boolean; send: Props["send"] }) {
   const scores = view.scores ?? [];
   const recap = view.recap ?? [];
+  const [showRecap, setShowRecap] = useState(false);
   const fewest = scores.length ? scores[0].strikes : 0;
   const winners = scores.filter((s) => s.strikes === fewest).map((s) => s.name);
 
@@ -231,16 +232,32 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
 
         {recap.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <p className="uc-status" style={{ margin: "4px 0 0" }}>{zh ? "精彩回放" : "Slip-up recap"}</p>
-            {recap.slice(0, 6).map((r, i) => (
-              <p key={i} className="tp-bubble" style={{ fontSize: 13, margin: 0 }}>
-                <strong>{r.catcher}</strong>
-                {zh ? " 抓到 " : " caught "}
-                <strong>{r.culprit}</strong>
-                {zh ? " — " : " on "}
-                {r.text}
-              </p>
-            ))}
+            <button
+              className="secondary small"
+              onClick={() => setShowRecap((v) => !v)}
+              style={{ alignSelf: "flex-start" }}
+            >
+              {showRecap
+                ? zh
+                  ? "隐藏精彩回放 ▲"
+                  : "Hide recap ▲"
+                : zh
+                  ? `精彩回放 (${recap.length}) ▼`
+                  : `Slip-up recap (${recap.length}) ▼`}
+            </button>
+            {showRecap && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 240, overflowY: "auto" }}>
+                {recap.map((r, i) => (
+                  <p key={i} className="tp-bubble" style={{ fontSize: 13, margin: 0 }}>
+                    <strong>{r.catcher}</strong>
+                    {zh ? " 抓到 " : " caught "}
+                    <strong>{r.culprit}</strong>
+                    {zh ? " — " : " on "}
+                    {r.text}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

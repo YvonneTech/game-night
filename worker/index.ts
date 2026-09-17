@@ -3120,7 +3120,7 @@ export class GameRoom extends DurableObject<Env> {
     su.lastCaughtAt[targetId] = now;
     if (slipped) {
       su.log.push({ culpritId: targetId, catcherId, taboo: slipped, at: now });
-      if (su.log.length > 40) su.log.splice(0, su.log.length - 40);
+      if (su.log.length > 300) su.log.splice(0, su.log.length - 300);
     }
     su.taboos[targetId] = this.suDrawTaboo(su, slipped);
 

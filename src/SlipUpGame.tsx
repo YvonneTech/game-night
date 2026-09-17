@@ -222,7 +222,9 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
                 ...(i === 0 ? { outline: "3px solid var(--strong)", borderRadius: 8 } : {}),
               }}
             >
-              <span className="tp-step-tag">{i === 0 ? "🏆" : `${i + 1}.`}</span>
+              <span className="tp-step-tag" style={i < 3 ? { fontSize: 20 } : undefined}>
+                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
+              </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ color: s.color }}>{s.name}</strong>
                 <span className="muted" style={{ marginLeft: 8, fontSize: 13 }}>

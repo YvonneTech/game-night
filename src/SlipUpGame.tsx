@@ -190,60 +190,123 @@ function SUReveal({ view, isHost, zh, send }: { view: SUView; isHost: boolean; z
   const fewest = scores.length ? scores[0].strikes : 0;
   const winners = scores.filter((s) => s.strikes === fewest).map((s) => s.name);
 
+  const top = scores.slice(0, 3);
+  const rest = scores.slice(3);
+  // Visual order on the podium: 2nd, 1st, 3rd. Gold tallest.
+  const podium = [
+    { s: top[1], place: 2, medal: "🥈", h: 70 },
+    { s: top[0], place: 1, medal: "🥇", h: 98 },
+    { s: top[2], place: 3, medal: "🥉", h: 50 },
+  ].filter((p) => p.s);
+
   return (
     <main className="center" style={{ maxWidth: 560 }}>
-      <section className="result-panel" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <section className="result-panel" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <Header zh={zh} right={<span className="uc-round">{zh ? "揭晓" : "Reveal"}</span>} />
 
         <p className="uc-status" style={{ textAlign: "center", margin: 0 }}>
           🏆 <strong>{winners.join(" & ")}</strong>
           {` · ${fewest} ${zh ? "次被抓" : fewest === 1 ? "slip" : "slips"}`}
         </p>
-        <p className="muted" style={{ textAlign: "right", margin: "-2px 4px 0", fontSize: 11 }}>
-          😳 {zh ? "被抓" : "slips"} · 🎯 {zh ? "抓人" : "catches"}
-        </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {scores.map((s, i) => (
+        {/* Podium for the top 3 */}
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 8 }}>
+          {podium.map(({ s, place, medal, h }) => (
             <div
               key={s.id}
-              className="tp-reveal-item"
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 12px",
-                borderLeft: `4px solid ${s.color}`,
-                ...(i === 0
-                  ? { outline: "2px solid var(--strong)", borderRadius: 8, background: "var(--panel-2)" }
-                  : {}),
-              }}
+              style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: 108, minWidth: 0 }}
             >
-              <span style={{ fontSize: i < 3 ? 24 : 15, width: 28, textAlign: "center", flexShrink: 0 }}>
-                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
+              <span style={{ fontSize: place === 1 ? 36 : 28, lineHeight: 1 }}>{medal}</span>
+              <strong
+                style={{
+                  color: s.color,
+                  fontSize: place === 1 ? 16 : 14,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {s.name}
+              </strong>
+              <span
+                className="muted"
+                style={{
+                  fontSize: 11,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {s.taboo.text}
               </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong
-                  style={{
-                    color: s.color,
-                    fontSize: 17,
-                    display: "block",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.name}
-                </strong>
-                <span className="muted" style={{ fontSize: 12 }}>{s.taboo.text}</span>
-              </div>
-              <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap", flexShrink: 0 }}>
+              <span className="muted" style={{ fontSize: 11, whiteSpace: "nowrap" }}>
                 😳 {s.strikes} · 🎯 {s.catches}
               </span>
+              <div
+                style={{
+                  width: "100%",
+                  height: h,
+                  marginTop: 2,
+                  borderRadius: "8px 8px 0 0",
+                  background: `linear-gradient(${s.color}, ${s.color})`,
+                  opacity: 0.92,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "center",
+                  paddingTop: 6,
+                  color: "#fff",
+                  fontWeight: 800,
+                  fontSize: place === 1 ? 22 : 18,
+                  textShadow: "0 1px 3px rgba(0,0,0,0.4)",
+                  boxShadow: place === 1 ? "0 0 0 2px var(--strong) inset" : "none",
+                }}
+              >
+                {place}
+              </div>
             </div>
           ))}
         </div>
+
+        {rest.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {rest.map((s, i) => (
+              <div
+                key={s.id}
+                className="tp-reveal-item"
+                style={{
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 12px",
+                  borderLeft: `4px solid ${s.color}`,
+                }}
+              >
+                <span style={{ fontSize: 14, width: 28, textAlign: "center", flexShrink: 0 }}>{i + 4}.</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <strong
+                    style={{
+                      color: s.color,
+                      fontSize: 16,
+                      display: "block",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {s.name}
+                  </strong>
+                  <span className="muted" style={{ fontSize: 12 }}>{s.taboo.text}</span>
+                </div>
+                <span className="muted" style={{ fontSize: 13, whiteSpace: "nowrap", flexShrink: 0 }}>
+                  😳 {s.strikes} · 🎯 {s.catches}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {recap.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>

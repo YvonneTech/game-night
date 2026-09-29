@@ -2293,6 +2293,9 @@ export class GameRoom extends DurableObject<Env> {
     if (state.game !== "fakeartist" || !fa) return null;
     const gameOver = state.phase === "gameEnd";
     const isFake = !!playerId && fa.fakeIds.includes(playerId);
+    // The fake must not receive the word while the round is live and
+    // unrevealed — blank it server-side instead of relying on client hiding.
+    const word = isFake && !gameOver && fa.sub !== "reveal" ? "" : fa.word;
     const totalTurns = fa.order.length * fa.laps;
     const currentId = fa.sub === "draw" ? fa.order[fa.turnIndex % fa.order.length] : "";
     const eligible = new Set(this.faEligibleVoters(state));
@@ -2304,7 +2307,7 @@ export class GameRoom extends DurableObject<Env> {
     }));
     return {
       sub: fa.sub,
-      word: fa.word,
+      word,
       category: fa.category,
       isFake,
       fakeCount: fa.fakeIds.length,
@@ -3915,11 +3918,6 @@ export class GameRoom extends DurableObject<Env> {
     if (state.game === "fakeartist" && state.fakeartist && state.phase === "playing") {
       const fa = state.fakeartist;
       fa.fakeIds = fa.fakeIds.filter((id) => id !== playerId);
-      // Ensure at least one fake remains; promote a random civ if needed
-      if (fa.fakeIds.length === 0 && state.players.length >= 3) {
-        const remaining = state.players.map((p) => p.id);
-        fa.fakeIds = [remaining[crypto.getRandomValues(new Uint32Array(1))[0] % remaining.length]];
-      }
       fa.order = fa.order.filter((id) => id !== playerId);
       fa.candidates = fa.candidates.filter((id) => id !== playerId);
       delete fa.votes[playerId];
@@ -3930,6 +3928,21 @@ export class GameRoom extends DurableObject<Env> {
       if (state.players.length < 3) {
         state.phase = "gameEnd";
         fa.result = "civ";
+        this.save(state);
+        await this.schedule(state);
+        this.broadcast(state);
+        return;
+      }
+      // No fakes left while the round is still undecided: anyone who could
+      // take over already knows the word, so end the round instead of
+      // promoting a compromised replacement.
+      if (fa.fakeIds.length === 0 && (fa.sub === "draw" || fa.sub === "vote")) {
+        state.phase = "gameEnd";
+        fa.result = "civ";
+        this.system(
+          state,
+          state.lang === "zh" ? "假画家退出了 — 真画家直接获胜!" : "The fake artist left — painters win by default!",
+        );
         this.save(state);
         await this.schedule(state);
         this.broadcast(state);

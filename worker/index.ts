@@ -258,6 +258,9 @@ type TPView = {
 // Keep in sync with the three 18-item inspiration lists in TelephoneGame.tsx.
 const TP_INSPIRATION_COUNT = 18 * 18 * 18;
 const TP_INSPIRATION_STEP = 1871; // Coprime with 5,832, so every index appears exactly once.
+// Telephone keeps every drawing in the room's single SQLite row (~2 MB limit).
+// 6 players → 18 drawings × 4,000 points × ~22 bytes ≈ 1.6 MB worst case.
+const TP_MAX_DRAWING_POINTS = 4000;
 
 // Punchline (神回复): everyone fills in funny prompts, then the room votes head-to-head
 // on the funniest answer to each prompt. Each prompt is answered by two players who go
@@ -1386,7 +1389,8 @@ function normalizeStrokes(value: unknown): Stroke[] | null {
     const width = typeof item.width === "number" ? Math.min(Math.max(item.width, 1), 30) : 6;
     const points = item.points.slice(0, 800).flatMap((point): Array<{ x: number; y: number }> => {
       if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") return [];
-      return [{ x: point.x, y: point.y }];
+      // 3 decimals is sub-pixel on any board and halves the stored/broadcast size.
+      return [{ x: Math.round(point.x * 1000) / 1000, y: Math.round(point.y * 1000) / 1000 }];
     });
     return points.length ? [{ color, width, points }] : [];
   });
@@ -2410,6 +2414,14 @@ export class GameRoom extends DurableObject<Env> {
     } else {
       const strokes = isRecord(payload) ? normalizeStrokes(payload.strokes) : null;
       if (!strokes || strokes.length === 0) return; // must draw something
+      const pointCount = strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
+      if (pointCount > TP_MAX_DRAWING_POINTS) {
+        this.error(
+          ws,
+          state.lang === "zh" ? "画得太细了 — 撤销几笔再提交" : "Drawing is too detailed — undo a few strokes and try again.",
+        );
+        return;
+      }
       entry = { kind: "draw", authorId: session.playerId, authorName: name, text: "", strokes };
     }
     chain.entries.push(entry);

@@ -4,7 +4,6 @@ export type UCView = {
   sub: "describe" | "vote" | "reveal";
   round: number;
   spyCount: number;
-  myRole: "civ" | "spy" | null;
   myWord: string;
   alive: boolean;
   youSpeak: boolean;

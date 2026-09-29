@@ -123,7 +123,8 @@ type UCView = {
   sub: "describe" | "vote" | "reveal";
   round: number;
   spyCount: number;
-  myRole: UCRole | null;
+  // No myRole: players must not learn whether they're the spy until the
+  // game-end `reveal` list. Both sides only ever see their own word.
   myWord: string;
   alive: boolean;
   youSpeak: boolean;
@@ -4428,7 +4429,6 @@ export class GameRoom extends DurableObject<Env> {
       sub: uc.sub,
       round: uc.round,
       spyCount: uc.spyCount,
-      myRole: me ? me.role : null,
       myWord: me ? me.word : "",
       alive: me ? me.alive : false,
       youSpeak: uc.sub === "describe" && currentId === playerId,

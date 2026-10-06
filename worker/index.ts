@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup" | "loveletter";
 type Lang = "en" | "zh";
 type UCRole = "civ" | "spy";
 type GameMode = "pictionary" | "charades" | "mixed";
@@ -98,6 +98,7 @@ type RoomState = {
   punchline: PLState | null;
   balderdash: BDState | null;
   slipup: SUState | null;
+  loveletter: LLState | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -391,6 +392,59 @@ type SUView = {
   recap: Array<{ culprit: string; catcher: string; text: string; kind: "word" | "action" }> | null;
 };
 
+// Love Letter lite (情书): a 5-role deduction micro-game. Everyone holds one
+// secret card; on your turn you draw a second card and play one of the two
+// for its power. Last player standing — or highest hand when the deck runs
+// out — wins the round and a token. First to LL_TARGET_TOKENS wins the game.
+type LLCard = "guard" | "priest" | "baron" | "prince" | "princess";
+type LLState = {
+  sub: "play" | "reveal" | "score";
+  round: number;
+  roundStartedAt: number; // lets clients scope the log to the current round
+  order: string[]; // fixed roster; the dead stay listed with alive=false
+  turnIndex: number;
+  deck: LLCard[];
+  hands: Record<string, LLCard>; // secret; alive players only
+  drawn: LLCard | null; // extra card awaiting the current player's choice
+  alive: Record<string, boolean>;
+  discards: Record<string, LLCard[]>; // played cards are public
+  tokens: Record<string, number>;
+  peeks: Record<string, { targetId: string; targetName: string; card: LLCard }>;
+  winnerId: string | null; // round winner at reveal, game winner at score
+  tied: boolean; // round ended in a tie: no token awarded
+};
+
+type LLMemberView = {
+  id: string;
+  name: string;
+  color: string;
+  alive: boolean;
+  connected: boolean;
+  tokens: number;
+};
+type LLView = {
+  sub: "play" | "reveal" | "score";
+  round: number;
+  roundStartedAt: number;
+  targetTokens: number;
+  currentId: string;
+  currentName: string;
+  youPlay: boolean;
+  hand: LLCard | null; // my own secret card, never anyone else's
+  drawn: LLCard | null; // my extra card while it is my turn, else null
+  members: LLMemberView[];
+  discards: Record<string, LLCard[]>;
+  tokens: Record<string, number>;
+  deckCount: number; // remaining deck is a count, never the cards
+  peek: { targetName: string; card: LLCard } | null; // my latest priest peek
+  winnerId: string | null;
+  winnerName: string | null;
+  tied: boolean;
+  reveal: Array<{ id: string; name: string; card: LLCard }> | null;
+  scores: Array<{ name: string; tokens: number }> | null;
+  isSpectator: boolean;
+};
+
 type Snapshot = Omit<
   RoomState,
   | "players"
@@ -401,6 +455,7 @@ type Snapshot = Omit<
   | "punchline"
   | "balderdash"
   | "slipup"
+  | "loveletter"
   | "telephoneInspirationCursor"
   | "telephoneInspirationOffset"
 > & {
@@ -412,6 +467,7 @@ type Snapshot = Omit<
   punchline: PLView | null;
   balderdash: BDView | null;
   slipup: SUView | null;
+  loveletter: LLView | null;
   timeLeft: number;
   hiddenWord: string;
   wordLength: number;
@@ -438,6 +494,20 @@ const BD_REVEAL_SECONDS = 8;
 const BD_ROUNDS = 3;
 const SU_DURATION_SECONDS = 180; // one continuous timed round
 const SU_CATCH_COOLDOWN_MS = 1500; // ignore repeat catches on the same slip
+const LL_TARGET_TOKENS = 3; // first to 3 round wins takes the game
+const LL_RANKS: Record<LLCard, number> = { guard: 1, priest: 2, baron: 3, prince: 4, princess: 5 };
+const LL_NAMES: Record<Lang, Record<LLCard, string>> = {
+  en: { guard: "Guard", priest: "Priest", baron: "Baron", prince: "Prince", princess: "Princess" },
+  zh: { guard: "守卫", priest: "祭司", baron: "男爵", prince: "王子", princess: "公主" },
+};
+// Fixed 20-card lite deck: no scaling logic needed for 2–6 players.
+const LL_DECK: LLCard[] = [
+  ...Array<LLCard>(8).fill("guard"),
+  ...Array<LLCard>(4).fill("priest"),
+  ...Array<LLCard>(4).fill("baron"),
+  ...Array<LLCard>(3).fill("prince"),
+  "princess",
+];
 
 function isEmojiOnly(input: string): boolean {
   const s = input.trim();
@@ -1580,6 +1650,15 @@ export class GameRoom extends DurableObject<Env> {
       case "suEnd":
         await this.suEnd(ws);
         break;
+      case "llPlay":
+        await this.llPlay(ws, command.payload);
+        break;
+      case "llDraw":
+        await this.llDraw(ws);
+        break;
+      case "llNext":
+        await this.llNext(ws);
+        break;
       case "next":
         await this.next(ws);
         break;
@@ -1907,7 +1986,8 @@ export class GameRoom extends DurableObject<Env> {
       payload.game === "punchline" ||
       payload.game === "balderdash" ||
       payload.game === "emoji" ||
-      payload.game === "slipup"
+      payload.game === "slipup" ||
+      payload.game === "loveletter"
     ) {
       state.game = payload.game;
     }
@@ -1991,6 +2071,11 @@ export class GameRoom extends DurableObject<Env> {
 
     if (state.game === "slipup") {
       await this.startSlipUp(state);
+      return;
+    }
+
+    if (state.game === "loveletter") {
+      this.startLoveLetter(state);
       return;
     }
 
@@ -3446,6 +3531,383 @@ export class GameRoom extends DurableObject<Env> {
     this.broadcast(state);
   }
 
+  // ---------- Love Letter lite (情书) ----------
+  private startLoveLetter(state: RoomState): void {
+    const order = state.players.map((p) => p.id);
+    const tokens: Record<string, number> = {};
+    for (const id of order) tokens[id] = 0;
+    state.loveletter = {
+      sub: "play",
+      round: 0,
+      roundStartedAt: 0,
+      order,
+      turnIndex: 0,
+      deck: [],
+      hands: {},
+      drawn: null,
+      alive: {},
+      discards: {},
+      tokens,
+      peeks: {},
+      winnerId: null,
+      tied: false,
+    };
+    this.llSetupRound(state);
+    state.phase = "playing";
+    state.messages = [];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? "情书开局 — 轮到你时抽一张、打一张，用技能淘汰所有人，先拿 3 个信物获胜！"
+        : "Love Letter started — draw one, play one, outlast everyone. First to 3 tokens wins!",
+    );
+    this.save(state);
+    this.broadcast(state);
+  }
+
+  private llSetupRound(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll) return;
+    const deck = this.shuffleIds(LL_DECK.map((_, i) => String(i))).map((s) => LL_DECK[Number(s)]);
+    const hands: Record<string, LLCard> = {};
+    const alive: Record<string, boolean> = {};
+    const discards: Record<string, LLCard[]> = {};
+    for (const id of ll.order) {
+      const card = deck.pop();
+      if (card === undefined) break;
+      hands[id] = card;
+      alive[id] = true;
+      discards[id] = [];
+    }
+    ll.round += 1;
+    ll.roundStartedAt = Date.now();
+    ll.turnIndex = 0;
+    ll.deck = deck;
+    ll.hands = hands;
+    ll.drawn = null;
+    ll.alive = alive;
+    ll.discards = discards;
+    ll.peeks = {};
+    ll.winnerId = null;
+    ll.tied = false;
+    ll.sub = "play";
+    this.system(
+      state,
+      state.lang === "zh" ? `第 ${ll.round} 轮 — 每人一张底牌，开始！` : `Round ${ll.round} — one secret card each, go!`,
+    );
+    this.llBeginTurn(state);
+  }
+
+  private llAliveIds(ll: LLState): string[] {
+    return ll.order.filter((id) => ll.alive[id]);
+  }
+
+  // A turn starts with just one card in hand. The current player clicks Draw
+  // (llDraw) to take their second card, then plays one of the two.
+  private llBeginTurn(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return;
+    if (this.llAliveIds(ll).length <= 1) {
+      this.llCheckRoundEnd(state);
+      return;
+    }
+    const current = ll.order[ll.turnIndex];
+    if (!current || !ll.alive[current]) {
+      this.llAdvanceTurn(state);
+      return;
+    }
+    if (ll.deck.length === 0) {
+      this.llEndRoundByShowdown(state);
+    }
+  }
+
+  // Testable core of the Draw click: deals the second card to the current
+  // player, or ends the round by showdown when the deck runs out first.
+  private llDealFor(state: RoomState, pid: string): boolean {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return false;
+    if (ll.order[ll.turnIndex] !== pid || !ll.alive[pid] || ll.drawn !== null) return false;
+    const card = ll.deck.pop();
+    if (card === undefined) {
+      this.llEndRoundByShowdown(state);
+      return true;
+    }
+    ll.drawn = card;
+    return true;
+  }
+
+  private llAdvanceTurn(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return;
+    ll.drawn = null;
+    const n = ll.order.length;
+    for (let step = 1; step <= n; step += 1) {
+      const idx = (ll.turnIndex + step) % n;
+      if (ll.alive[ll.order[idx]]) {
+        ll.turnIndex = idx;
+        break;
+      }
+    }
+    this.llBeginTurn(state);
+  }
+
+  private llHeldCards(state: RoomState, playerId: string): LLCard[] {
+    const ll = state.loveletter;
+    if (!ll) return [];
+    const out: LLCard[] = [];
+    const hand = ll.hands[playerId];
+    if (hand !== undefined) out.push(hand);
+    if (ll.drawn !== null && ll.order[ll.turnIndex] === playerId && ll.alive[playerId]) out.push(ll.drawn);
+    return out;
+  }
+
+  private llEliminate(state: RoomState, playerId: string, msg: string): void {
+    const ll = state.loveletter;
+    if (!ll || !ll.alive[playerId]) return;
+    ll.alive[playerId] = false;
+    const hand = ll.hands[playerId];
+    if (hand !== undefined) {
+      ll.discards[playerId] = [...(ll.discards[playerId] ?? []), hand];
+      delete ll.hands[playerId];
+    }
+    delete ll.peeks[playerId];
+    this.system(state, msg);
+  }
+
+  private llAwardToken(state: RoomState, winnerId: string): void {
+    const ll = state.loveletter;
+    if (!ll) return;
+    ll.tokens[winnerId] = (ll.tokens[winnerId] ?? 0) + 1;
+    ll.winnerId = winnerId;
+    ll.tied = false;
+    const name = this.playerName(state, winnerId);
+    const count = ll.tokens[winnerId];
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `${name} 拿下本轮！信物 ${count}/${LL_TARGET_TOKENS}`
+        : `${name} wins the round! Tokens ${count}/${LL_TARGET_TOKENS}`,
+    );
+    if (count >= LL_TARGET_TOKENS) {
+      ll.sub = "score";
+      this.system(
+        state,
+        state.lang === "zh" ? `${name} 先拿到 ${LL_TARGET_TOKENS} 个信物，赢得整局！` : `${name} reaches ${LL_TARGET_TOKENS} tokens and wins the game!`,
+      );
+    } else {
+      ll.sub = "reveal";
+    }
+  }
+
+  private llCheckRoundEnd(state: RoomState): boolean {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return false;
+    const alive = this.llAliveIds(ll);
+    if (alive.length <= 1) {
+      ll.drawn = null;
+      if (alive.length === 1) {
+        this.llAwardToken(state, alive[0]);
+      } else {
+        ll.winnerId = null;
+        ll.tied = true;
+        ll.sub = "reveal";
+        this.system(state, state.lang === "zh" ? "本轮无人存活 — 平局，无信物。" : "No one survives — tied round, no token.");
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private llEndRoundByShowdown(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return;
+    ll.drawn = null;
+    let best = -1;
+    let winners: string[] = [];
+    for (const id of this.llAliveIds(ll)) {
+      const rank = LL_RANKS[ll.hands[id]];
+      if (rank > best) {
+        best = rank;
+        winners = [id];
+      } else if (rank === best) {
+        winners.push(id);
+      }
+    }
+    if (winners.length === 1) {
+      this.llAwardToken(state, winners[0]);
+    } else {
+      ll.winnerId = null;
+      ll.tied = true;
+      ll.sub = "reveal";
+      this.system(state, state.lang === "zh" ? "牌堆见底，最高牌打平 — 本轮无信物。" : "Deck exhausted with a tie on top — no token this round.");
+    }
+  }
+
+  // Testable core: validates and resolves one play, then ends or advances the
+  // round. Returns false when the play is illegal (turn, card, or target).
+  private llApplyPlay(state: RoomState, pid: string, play: LLCard, targetId: string, guess: string): boolean {
+    const ll = state.loveletter;
+    if (!ll || ll.sub !== "play") return false;
+    if (ll.order[ll.turnIndex] !== pid || !ll.alive[pid]) return false;
+    const held = this.llHeldCards(state, pid);
+    if (held.length !== 2 || !held.includes(play)) return false;
+    const needsTarget = play === "guard" || play === "priest" || play === "baron" || play === "prince";
+    if (needsTarget && (!targetId || !ll.alive[targetId])) return false;
+    if ((play === "guard" || play === "priest" || play === "baron") && targetId === pid) return false;
+    if (play === "guard" && guess !== "priest" && guess !== "baron" && guess !== "prince" && guess !== "princess") {
+      return false;
+    }
+    const kept = held[0] === play ? held[1] : held[0];
+    ll.drawn = null;
+    ll.hands[pid] = kept;
+    ll.discards[pid] = [...(ll.discards[pid] ?? []), play];
+    const actor = this.playerName(state, pid);
+    const zh = state.lang === "zh";
+    if (play === "princess") {
+      this.llEliminate(state, pid, zh ? `${actor} 打出了公主，直接出局！` : `${actor} played the Princess and is out!`);
+    } else if (play === "guard") {
+      const targetName = this.playerName(state, targetId);
+      if (ll.hands[targetId] === guess) {
+        this.llEliminate(
+          state,
+          targetId,
+          zh
+            ? `${actor} 猜中了 ${targetName} 的${LL_NAMES.zh[guess as LLCard]}！${targetName} 出局。`
+            : `${actor} guessed ${targetName}'s ${LL_NAMES.en[guess as LLCard]}! ${targetName} is out.`,
+        );
+      } else {
+        this.system(state, zh ? `${actor} 猜错了 ${targetName}，什么都没发生。` : `${actor} guessed wrong — nothing happens.`);
+      }
+    } else if (play === "priest") {
+      ll.peeks[pid] = { targetId, targetName: this.playerName(state, targetId), card: ll.hands[targetId] };
+      this.system(state, zh ? `${actor} 偷看了 ${ll.peeks[pid].targetName} 的底牌。` : `${actor} peeked at ${ll.peeks[pid].targetName}'s hand.`);
+    } else if (play === "baron") {
+      const mine = LL_RANKS[ll.hands[pid]];
+      const theirs = LL_RANKS[ll.hands[targetId]];
+      const targetName = this.playerName(state, targetId);
+      if (mine > theirs) {
+        this.llEliminate(state, targetId, zh ? `${actor} 比牌赢了 ${targetName}，${targetName} 出局！` : `${actor} outranks ${targetName} — ${targetName} is out!`);
+      } else if (theirs > mine) {
+        this.llEliminate(state, pid, zh ? `${targetName} 比牌赢了 ${actor}，${actor} 出局！` : `${targetName} outranks ${actor} — ${actor} is out!`);
+      } else {
+        this.system(state, zh ? `${actor} 和 ${targetName} 比牌打平，都没事。` : `${actor} ties ${targetName} — both survive.`);
+      }
+    } else if (play === "prince") {
+      const targetName = this.playerName(state, targetId);
+      const discarded = ll.hands[targetId];
+      ll.discards[targetId] = [...(ll.discards[targetId] ?? []), discarded];
+      delete ll.hands[targetId];
+      if (discarded === "princess") {
+        ll.alive[targetId] = false;
+        this.system(state, zh ? `${targetName} 被迫弃掉了公主，直接出局！` : `${targetName} was forced to discard the Princess and is out!`);
+      } else {
+        const replacement = ll.deck.pop();
+        if (replacement === undefined) {
+          ll.alive[targetId] = false;
+          this.system(
+            state,
+            zh ? `牌堆已空，${targetName} 弃牌后无牌可补，出局。` : `Deck empty — ${targetName} discards with no redraw and is out.`,
+          );
+        } else {
+          ll.hands[targetId] = replacement;
+          this.system(state, zh ? `${targetName} 被迫弃牌并重抽一张。` : `${targetName} discards and draws a new hand.`);
+        }
+      }
+    }
+    if (!this.llCheckRoundEnd(state)) this.llAdvanceTurn(state);
+    return true;
+  }
+
+  private async llPlay(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    const ll = state.loveletter;
+    if (!session || state.game !== "loveletter" || state.phase !== "playing" || !ll || ll.sub !== "play") return;
+    if (!isRecord(payload) || typeof payload.play !== "string") return;
+    const play = payload.play as LLCard;
+    if (play !== "guard" && play !== "priest" && play !== "baron" && play !== "prince" && play !== "princess") return;
+    const targetId = isRecord(payload) && typeof payload.targetId === "string" ? (payload.targetId as string) : "";
+    const guess = isRecord(payload) && typeof payload.guess === "string" ? (payload.guess as string) : "";
+    if (!this.llApplyPlay(state, session.playerId, play, targetId, guess)) return;
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async llDraw(ws: WebSocket): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    if (!session || state.game !== "loveletter" || state.phase !== "playing") return;
+    if (!this.llDealFor(state, session.playerId)) return;
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private async llNext(ws: WebSocket): Promise<void> {
+    const state = this.load();
+    const ll = state.loveletter;
+    if (!this.isHost(ws, state) || state.game !== "loveletter" || !ll) return;
+    if (ll.sub !== "reveal") return;
+    this.llSetupRound(state);
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
+  }
+
+  private llView(state: RoomState, playerId?: string): LLView | null {
+    const ll = state.loveletter;
+    if (state.game !== "loveletter" || !ll) return null;
+    const isSpectator = !playerId || ll.order.indexOf(playerId) < 0;
+    const currentId = ll.sub === "play" ? (ll.order[ll.turnIndex] ?? "") : "";
+    const members: LLMemberView[] = ll.order.map((id) => {
+      const p = state.players.find((pp) => pp.id === id);
+      return {
+        id,
+        name: p?.name ?? "?",
+        color: p?.color ?? "#94a3b8",
+        alive: !!ll.alive[id],
+        connected: p?.connected ?? false,
+        tokens: ll.tokens[id] ?? 0,
+      };
+    });
+    const myPeek = playerId ? ll.peeks[playerId] : undefined;
+    let reveal: LLView["reveal"] = null;
+    if (ll.sub === "reveal") {
+      reveal = ll.order
+        .filter((id) => ll.hands[id] !== undefined)
+        .map((id) => ({ id, name: this.playerName(state, id), card: ll.hands[id] }));
+    }
+    let scores: LLView["scores"] = null;
+    if (ll.sub === "score") {
+      scores = [...members]
+        .sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name))
+        .map((m) => ({ name: m.name, tokens: m.tokens }));
+    }
+    return {
+      sub: ll.sub,
+      round: ll.round,
+      roundStartedAt: ll.roundStartedAt,
+      targetTokens: LL_TARGET_TOKENS,
+      currentId,
+      currentName: currentId ? this.playerName(state, currentId) : "",
+      youPlay: ll.sub === "play" && !!playerId && currentId === playerId && ll.alive[playerId] === true,
+      hand: playerId && ll.hands[playerId] !== undefined ? ll.hands[playerId] : null,
+      drawn: playerId && currentId === playerId && ll.sub === "play" ? ll.drawn : null,
+      members,
+      discards: { ...ll.discards },
+      tokens: { ...ll.tokens },
+      deckCount: ll.deck.length,
+      peek: myPeek ? { targetName: myPeek.targetName, card: myPeek.card } : null,
+      winnerId: ll.winnerId,
+      winnerName: ll.winnerId ? this.playerName(state, ll.winnerId) : null,
+      tied: ll.tied,
+      reveal,
+      scores,
+      isSpectator,
+    };
+  }
+
   private async startYarn(state: RoomState): Promise<void> {
     // Random teams, always 3v3 — humans split as evenly as possible, bots fill the rest.
     const shuffled = [...state.players];
@@ -3773,6 +4235,7 @@ export class GameRoom extends DurableObject<Env> {
     state.punchline = null;
     state.balderdash = null;
     state.slipup = null;
+    state.loveletter = null;
     state.strokes = [];
     state.messages = [];
     state.players = state.players.map((player) => ({
@@ -3895,6 +4358,25 @@ export class GameRoom extends DurableObject<Env> {
         const eligible = this.ucEligibleVoters(state);
         if (eligible.length > 0 && eligible.every((id) => uc.votes[id])) {
           this.ucResolveVotes(state);
+        }
+      }
+      this.save(state);
+      await this.schedule(state);
+      this.broadcast(state);
+      return;
+    }
+
+    // Love Letter: drop the leaver and keep the turn moving.
+    if (state.game === "loveletter" && state.loveletter && state.phase === "playing") {
+      const ll = state.loveletter;
+      const wasCurrent = (ll.order[ll.turnIndex] ?? "") === playerId;
+      ll.alive[playerId] = false;
+      delete ll.hands[playerId];
+      delete ll.peeks[playerId];
+      if (ll.sub === "play") {
+        if (!this.llCheckRoundEnd(state) && wasCurrent) {
+          ll.drawn = null;
+          this.llAdvanceTurn(state);
         }
       }
       this.save(state);
@@ -4407,6 +4889,7 @@ export class GameRoom extends DurableObject<Env> {
       punchline: this.plView(state, playerId),
       balderdash: this.bdView(state, playerId),
       slipup: this.suView(state, playerId),
+      loveletter: this.llView(state, playerId),
       timeLeft: this.timeLeft(state),
       hiddenWord,
       wordLength,
@@ -4563,6 +5046,7 @@ export class GameRoom extends DurableObject<Env> {
       punchline: null,
       balderdash: null,
       slipup: null,
+      loveletter: null,
       solved: 0,
       messages: [],
       strokes: [],

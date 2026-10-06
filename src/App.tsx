@@ -7,8 +7,9 @@ import TelephoneGame, { TPView } from "./TelephoneGame";
 import PunchlineGame, { PLView } from "./PunchlineGame";
 import BalderdashGame, { BDView } from "./BalderdashGame";
 import SlipUpGame, { SUView } from "./SlipUpGame";
+import LoveLetterGame, { LLView } from "./LoveLetterGame";
 
-type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup";
+type Game = "classic" | "passthepen" | "yarnpals" | "undercover" | "wavelength" | "fakeartist" | "telephone" | "punchline" | "balderdash" | "emoji" | "slipup" | "loveletter";
 
 function isEmojiOnly(input: string): boolean {
   const s = input.trim();
@@ -324,6 +325,7 @@ type Snapshot = {
   punchline: PLView | null;
   balderdash: BDView | null;
   slipup: SUView | null;
+  loveletter: LLView | null;
   solved: number;
   messages: Message[];
   strokes: Stroke[];
@@ -373,6 +375,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     balderdash: "Balderdash",
     emoji: "Emoji Movie",
     slipup: "Slip Up",
+    loveletter: "Love Letter",
   },
   zh: {
     classic: "你画我猜",
@@ -386,6 +389,7 @@ const GAME_LABELS: Record<"en" | "zh", Record<Game, string>> = {
     balderdash: "胡说八道",
     emoji: "表情猜成语",
     slipup: "说漏嘴",
+    loveletter: "情书",
   },
 };
 
@@ -405,6 +409,7 @@ const LOBBY_GAME_CHOICES = [
   { key: "balderdash", game: "balderdash" },
   { key: "emoji", game: "emoji" },
   { key: "slipup", game: "slipup" },
+  { key: "loveletter", game: "loveletter" },
 ] as const;
 
 const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: string }>> = {
@@ -461,6 +466,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
         "Best played in the same room. Everyone gets a secret taboo — a word you can't say or an action you can't do — that only OTHERS can see. Bait each other into slipping, and tap Caught! the instant they do. Needs 3+ players.",
       scoring: "Fewest slip-ups when the timer runs out wins.",
     },
+    loveletter: {
+      blurb:
+        "Draw one, play one. Guards guess hands, Priests peek, Barons duel, Princes force discards — and never touch the Princess. First to 3 tokens wins. 2–6 players.",
+      scoring: "Win a round to earn a token — first to 3 tokens wins the game.",
+    },
   },
   zh: {
     classic: {
@@ -507,6 +517,11 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
       blurb:
         "最适合同处一室时玩。每人拿到一张秘密禁忌牌 —— 一个不能说的词，或一个不能做的动作 —— 只有别人看得到，你自己看不到。互相下套，一旦谁说漏嘴/做出来，立刻点「抓到！」。需 3 人以上。",
       scoring: "时间到时被抓次数最少者获胜。",
+    },
+    loveletter: {
+      blurb:
+        "抽一张、打一张：守卫猜牌、祭司偷看、男爵比大小、王子逼弃牌，千万别碰公主。先拿 3 个信物者获胜，可 2–6 人玩。",
+      scoring: "赢下一轮得 1 个信物，先拿 3 个信物者赢得整局。",
     },
   },
 };
@@ -1305,7 +1320,8 @@ export default function App() {
               game !== "telephone" &&
               game !== "punchline" &&
               game !== "balderdash" &&
-              game !== "slipup" && (
+              game !== "slipup" &&
+              game !== "loveletter" && (
               <SettingGroup title="Rounds">
                 {([1, 5, 10, 15] as const).map((rounds) => (
                   <button
@@ -1407,6 +1423,10 @@ export default function App() {
 
       {phase === "playing" && snapshot?.slipup && game === "slipup" && (
         <SlipUpGame view={snapshot.slipup} myId={id} isHost={host} lang={snapshot.lang} send={send} />
+      )}
+
+      {phase === "playing" && snapshot?.loveletter && game === "loveletter" && (
+        <LoveLetterGame view={snapshot.loveletter} myId={id} isHost={host} lang={snapshot.lang} send={send} messages={snapshot.messages} />
       )}
 
       {phase === "choosing" && snapshot && round && (

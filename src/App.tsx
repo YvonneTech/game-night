@@ -468,8 +468,8 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     },
     loveletter: {
       blurb:
-        "Draw one, play one. Guards guess hands, Priests peek, Barons duel, Princes force discards — and never touch the Princess. First to 3 tokens wins. 2–6 players.",
-      scoring: "Win a round to earn a token — first to 3 tokens wins the game.",
+        "The official 10-role game: Spy, Guard, Priest, Baron, Handmaid, Prince, Chancellor, King, Countess, Princess. Draw one, play one, outlast everyone. Token target scales with player count. 2–6 players.",
+      scoring: "Round wins earn favor tokens — lone Spy at round end earns a bonus one. First to the table target wins.",
     },
   },
   zh: {
@@ -520,8 +520,8 @@ const GAME_INFO: Record<"en" | "zh", Record<Game, { blurb: string; scoring: stri
     },
     loveletter: {
       blurb:
-        "抽一张、打一张：守卫猜牌、祭司偷看、男爵比大小、王子逼弃牌，千万别碰公主。先拿 3 个信物者获胜，可 2–6 人玩。",
-      scoring: "赢下一轮得 1 个信物，先拿 3 个信物者赢得整局。",
+        "官方 10 种角色：间谍、守卫、祭司、男爵、侍女、王子、宰相、国王、伯爵夫人、公主。抽一张打一张，活到最后。信物目标随人数变化，可 2–6 人玩。",
+      scoring: "赢下一轮得信物，终局唯一出过间谍者额外 +1。先达到人数对应目标者获胜。",
     },
   },
 };

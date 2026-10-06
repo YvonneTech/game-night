@@ -1,6 +1,7 @@
-// Love Letter lite: hidden-hand redaction plus card-power resolution and the
-// first-to-3-tokens game end. Exercises llApplyPlay/llView directly with
-// hand-built state, mirroring tests/undercover.test.mjs.
+// Love Letter (Second Edition rules): hidden-hand redaction, card-power
+// resolution, scaled token targets, and round setup. Exercises
+// llApplyPlay/llView directly with hand-built state, mirroring
+// tests/undercover.test.mjs.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadGameRoom } from "./load-worker.mjs";
@@ -19,6 +20,8 @@ function makeState(overrides = {}) {
     loveletter: {
       sub: "play",
       round: 1,
+      target: 4, // 3 players on the Second Edition table
+      lastWinner: null,
       order: [...IDS],
       turnIndex: 0,
       deck: ["guard", "priest", "baron"],
@@ -28,6 +31,10 @@ function makeState(overrides = {}) {
       discards: { a: [], b: [], c: [] },
       tokens: { a: 0, b: 0, c: 0 },
       peeks: {},
+      protected: {},
+      pending: null,
+      burned: [],
+      burnedUp: [],
       winnerId: null,
       tied: false,
       ...overrides,
@@ -168,6 +175,148 @@ describe("llDealFor draw click", () => {
   });
 });
 
+describe("second edition setup", () => {
+  it("builds the 21-card deck with official burns and scaled targets", () => {
+    const state = makeState();
+    room.llSetupRound(state);
+    const ll = state.loveletter;
+    assert.equal(ll.burned.length, 1);
+    assert.deepEqual(ll.burnedUp, []);
+    assert.equal(ll.deck.length, 21 - 1 - 3);
+    assert.equal(ll.target, 4);
+    assert.equal(ll.turnIndex, 0);
+    const full = [...ll.deck, ...Object.values(ll.hands), ...ll.burned, ...ll.burnedUp].sort();
+    assert.deepEqual(full, [
+      "baron", "baron", "chancellor", "chancellor", "countess", "guard", "guard", "guard",
+      "guard", "guard", "guard", "handmaid", "handmaid", "king", "priest", "priest",
+      "prince", "prince", "princess", "spy", "spy",
+    ]);
+  });
+
+  it("burns four with two players and targets six tokens", () => {
+    const state = {
+      game: "loveletter",
+      phase: "playing",
+      lang: "en",
+      players: [
+        { id: "a", name: "A", connected: true },
+        { id: "b", name: "B", connected: true },
+      ],
+      messages: [],
+      loveletter: {
+        sub: "play",
+        round: 0,
+        target: 6,
+        lastWinner: null,
+        order: ["a", "b"],
+        turnIndex: 0,
+        deck: [],
+        hands: {},
+        drawn: null,
+        alive: {},
+        discards: {},
+        tokens: { a: 0, b: 0 },
+        peeks: {},
+        protected: {},
+        pending: null,
+        burned: [],
+        burnedUp: [],
+        winnerId: null,
+        tied: false,
+      },
+    };
+    room.llSetupRound(state);
+    const ll = state.loveletter;
+    assert.equal(ll.burned.length, 1);
+    assert.equal(ll.burnedUp.length, 3);
+    assert.equal(ll.deck.length, 21 - 1 - 3 - 2);
+  });
+
+  it("never leaks the face-down burn on the wire", () => {
+    const state = makeState({ burned: ["princess"], sub: "reveal" });
+    assert.doesNotMatch(JSON.stringify(room.llView(state, "a")), /"burned":/);
+  });
+
+  it("lets the round winner start the next round", () => {
+    const state = makeState({ lastWinner: "c" });
+    room.llSetupRound(state);
+    assert.equal(state.loveletter.turnIndex, 2);
+  });
+});
+
+describe("second edition powers", () => {
+  it("handmaid shields until the next turn, then lapses", () => {
+    const state = makeState({ hands: { a: "handmaid", b: "priest", c: "guard" }, drawn: "guard" });
+    assert.equal(room.llApplyPlay(state, "a", "handmaid", "", ""), true);
+    assert.equal(state.loveletter.protected.a, true);
+    state.loveletter.drawn = "guard"; // b drew; turn already advanced to b
+    assert.equal(room.llApplyPlay(state, "b", "guard", "a", "priest"), false);
+    state.loveletter.drawn = "prince";
+    assert.equal(room.llApplyPlay(state, "b", "prince", "a", ""), false);
+    state.loveletter.turnIndex = 0;
+    room.llBeginTurn(state);
+    assert.equal(state.loveletter.protected.a, false);
+  });
+
+  it("king swaps the two hands", () => {
+    const state = makeState({ hands: { a: "king", b: "priest", c: "guard" }, drawn: "guard" });
+    assert.equal(room.llApplyPlay(state, "a", "king", "b", ""), true);
+    assert.equal(state.loveletter.hands.a, "priest");
+    assert.equal(state.loveletter.hands.b, "guard");
+    assert.equal(state.loveletter.order[state.loveletter.turnIndex], "b");
+  });
+
+  it("countess must be played while holding king or prince", () => {
+    const state = makeState({ hands: { a: "countess", b: "priest", c: "guard" }, drawn: "king" });
+    assert.equal(room.llApplyPlay(state, "a", "king", "b", ""), false);
+    assert.equal(room.llApplyPlay(state, "a", "countess", "", ""), true);
+    assert.equal(state.loveletter.alive.a, true);
+  });
+
+  it("chancellor keeps one of three and stacks the rest chosen-order up", () => {
+    const setup = () => makeState({
+      hands: { a: "chancellor", b: "priest", c: "guard" },
+      drawn: "guard",
+      deck: ["baron", "priest", "king"],
+    });
+    const state = setup();
+    assert.equal(room.llApplyPlay(state, "a", "chancellor", "", ""), true);
+    assert.deepEqual(state.loveletter.pending, { pid: "a", choices: ["guard", "king", "priest"] });
+    assert.equal(room.llResolveChancellor(state, "a", { keepIndex: 0, firstIndex: 2 }), true);
+    assert.equal(state.loveletter.hands.a, "guard");
+    assert.deepEqual(state.loveletter.deck, ["king", "baron", "priest"]);
+    assert.equal(state.loveletter.pending, null);
+    assert.equal(state.loveletter.order[state.loveletter.turnIndex], "b");
+  });
+
+  it("chancellor rejects bad choices and strangers", () => {
+    const state = makeState({
+      hands: { a: "chancellor", b: "priest", c: "guard" },
+      drawn: "guard",
+      deck: ["baron", "priest", "king"],
+    });
+    assert.equal(room.llApplyPlay(state, "a", "chancellor", "", ""), true);
+    assert.equal(room.llResolveChancellor(state, "a", { keepIndex: 1, firstIndex: 1 }), false);
+    assert.equal(room.llResolveChancellor(state, "b", { keepIndex: 0, firstIndex: 2 }), false);
+    assert.notEqual(state.loveletter.pending, null);
+  });
+
+  it("lone spy at round end earns a bonus token", () => {
+    const state = makeState({ discards: { a: ["spy"], b: ["guard"], c: ["priest"] } });
+    room.llSpyBonus(state);
+    assert.deepEqual(state.loveletter.tokens, { a: 1, b: 0, c: 0 });
+    const tied = makeState({ discards: { a: ["spy"], b: ["spy"], c: [] } });
+    room.llSpyBonus(tied);
+    assert.deepEqual(tied.loveletter.tokens, { a: 0, b: 0, c: 0 });
+  });
+
+  it("guard can name the new high cards, never guard", () => {
+    const state = makeState({ hands: { a: "guard", b: "king", c: "priest" }, drawn: "guard" });
+    assert.equal(room.llApplyPlay(state, "a", "guard", "b", "king"), true);
+    assert.equal(state.loveletter.alive.b, false);
+  });
+});
+
 describe("round log scoping", () => {
   it("stamps each round so clients can clear the log per round", () => {
     const state = makeState();
@@ -193,6 +342,8 @@ describe("round and game end", () => {
       loveletter: {
         sub: "play",
         round: 1,
+        target: 6, // 2 players on the Second Edition table
+        lastWinner: null,
         order: ["a", "b"],
         turnIndex: 0,
         deck: ["guard", "baron"],
@@ -202,6 +353,10 @@ describe("round and game end", () => {
         discards: { a: [], b: [] },
         tokens: { a: 0, b: 0 },
         peeks: {},
+        protected: {},
+        pending: null,
+        burned: [],
+        burnedUp: [],
         winnerId: null,
         tied: false,
       },
@@ -212,20 +367,20 @@ describe("round and game end", () => {
     assert.equal(state.loveletter.tokens.a, 1);
   });
 
-  it("third token ends the game with a score board", () => {
+  it("reaching the scaled target ends the game with a score board", () => {
     const state = makeState({
       alive: { a: true, b: false, c: false },
       hands: { a: "baron" },
       drawn: null,
-      tokens: { a: 2, b: 1, c: 0 },
+      tokens: { a: 3, b: 1, c: 0 },
     });
     assert.equal(room.llCheckRoundEnd(state), true);
-    assert.equal(state.loveletter.sub, "score");
+    assert.equal(state.loveletter.sub, "score"); // 3 players -> target 4
     assert.equal(state.loveletter.winnerId, "a");
     const view = room.llView(state, "a");
     assert.deepEqual(
       view.scores.map((s) => [s.name, s.tokens]),
-      [["A", 3], ["B", 1], ["C", 0]],
+      [["A", 4], ["B", 1], ["C", 0]],
     );
   });
 

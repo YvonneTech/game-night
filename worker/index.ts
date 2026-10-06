@@ -392,15 +392,28 @@ type SUView = {
   recap: Array<{ culprit: string; catcher: string; text: string; kind: "word" | "action" }> | null;
 };
 
-// Love Letter lite (情书): a 5-role deduction micro-game. Everyone holds one
-// secret card; on your turn you draw a second card and play one of the two
-// for its power. Last player standing — or highest hand when the deck runs
-// out — wins the round and a token. First to LL_TARGET_TOKENS wins the game.
-type LLCard = "guard" | "priest" | "baron" | "prince" | "princess";
+// Love Letter (情书), Second Edition rules: 2-6 players, 21 cards, 10 roles.
+// Everyone holds one secret card; on your turn you draw a second card and
+// play one of the two for its power. Last player standing — or highest hand
+// when the deck runs out — wins the round and a favor token. First to the
+// player-count target wins the game; the round winner starts the next round.
+type LLCard =
+  | "spy"
+  | "guard"
+  | "priest"
+  | "baron"
+  | "handmaid"
+  | "prince"
+  | "chancellor"
+  | "king"
+  | "countess"
+  | "princess";
 type LLState = {
   sub: "play" | "reveal" | "score";
   round: number;
   roundStartedAt: number; // lets clients scope the log to the current round
+  target: number; // favor tokens to win, scaled by player count
+  lastWinner: string | null; // starts the next round (random pick on ties)
   order: string[]; // fixed roster; the dead stay listed with alive=false
   turnIndex: number;
   deck: LLCard[];
@@ -410,6 +423,10 @@ type LLState = {
   discards: Record<string, LLCard[]>; // played cards are public
   tokens: Record<string, number>;
   peeks: Record<string, { targetId: string; targetName: string; card: LLCard }>;
+  protected: Record<string, boolean>; // handmaid immunity until next turn
+  pending: { pid: string; choices: LLCard[] } | null; // chancellor keep+order choice
+  burned: LLCard[]; // face-down setup discards, never revealed
+  burnedUp: LLCard[]; // 2-player face-up setup discards, shown at reveal
   winnerId: string | null; // round winner at reveal, game winner at score
   tied: boolean; // round ended in a tie: no token awarded
 };
@@ -421,6 +438,7 @@ type LLMemberView = {
   alive: boolean;
   connected: boolean;
   tokens: number;
+  protected: boolean; // handmaid immunity until next turn
 };
 type LLView = {
   sub: "play" | "reveal" | "score";
@@ -437,10 +455,12 @@ type LLView = {
   tokens: Record<string, number>;
   deckCount: number; // remaining deck is a count, never the cards
   peek: { targetName: string; card: LLCard } | null; // my latest priest peek
+  chancellor: LLCard[] | null; // my pending keep-one-of-three choice, else null
   winnerId: string | null;
   winnerName: string | null;
   tied: boolean;
   reveal: Array<{ id: string; name: string; card: LLCard }> | null;
+  burnedUp: LLCard[] | null; // 2-player face-up setup discards, reveal only
   scores: Array<{ name: string; tokens: number }> | null;
   isSpectator: boolean;
 };
@@ -494,18 +514,57 @@ const BD_REVEAL_SECONDS = 8;
 const BD_ROUNDS = 3;
 const SU_DURATION_SECONDS = 180; // one continuous timed round
 const SU_CATCH_COOLDOWN_MS = 1500; // ignore repeat catches on the same slip
-const LL_TARGET_TOKENS = 3; // first to 3 round wins takes the game
-const LL_RANKS: Record<LLCard, number> = { guard: 1, priest: 2, baron: 3, prince: 4, princess: 5 };
-const LL_NAMES: Record<Lang, Record<LLCard, string>> = {
-  en: { guard: "Guard", priest: "Priest", baron: "Baron", prince: "Prince", princess: "Princess" },
-  zh: { guard: "守卫", priest: "祭司", baron: "男爵", prince: "王子", princess: "公主" },
+// Favor tokens to win, scaled by player count (Second Edition table).
+const LL_TARGETS: Record<number, number> = { 2: 6, 3: 5, 4: 4, 5: 3, 6: 3 };
+const LL_RANKS: Record<LLCard, number> = {
+  spy: 0,
+  guard: 1,
+  priest: 2,
+  baron: 3,
+  handmaid: 4,
+  prince: 5,
+  chancellor: 6,
+  king: 7,
+  countess: 8,
+  princess: 9,
 };
-// Fixed 20-card lite deck: no scaling logic needed for 2–6 players.
+const LL_NAMES: Record<Lang, Record<LLCard, string>> = {
+  en: {
+    spy: "Spy",
+    guard: "Guard",
+    priest: "Priest",
+    baron: "Baron",
+    handmaid: "Handmaid",
+    prince: "Prince",
+    chancellor: "Chancellor",
+    king: "King",
+    countess: "Countess",
+    princess: "Princess",
+  },
+  zh: {
+    spy: "间谍",
+    guard: "守卫",
+    priest: "祭司",
+    baron: "男爵",
+    handmaid: "侍女",
+    prince: "王子",
+    chancellor: "宰相",
+    king: "国王",
+    countess: "伯爵夫人",
+    princess: "公主",
+  },
+};
+// Second Edition 21-card deck for 2–6 players.
 const LL_DECK: LLCard[] = [
-  ...Array<LLCard>(8).fill("guard"),
-  ...Array<LLCard>(4).fill("priest"),
-  ...Array<LLCard>(4).fill("baron"),
-  ...Array<LLCard>(3).fill("prince"),
+  ...Array<LLCard>(2).fill("spy"),
+  ...Array<LLCard>(6).fill("guard"),
+  ...Array<LLCard>(2).fill("priest"),
+  ...Array<LLCard>(2).fill("baron"),
+  ...Array<LLCard>(2).fill("handmaid"),
+  ...Array<LLCard>(2).fill("prince"),
+  ...Array<LLCard>(2).fill("chancellor"),
+  "king",
+  "countess",
   "princess",
 ];
 
@@ -1655,6 +1714,9 @@ export class GameRoom extends DurableObject<Env> {
         break;
       case "llDraw":
         await this.llDraw(ws);
+        break;
+      case "llChancellor":
+        await this.llChancellor(ws, command.payload);
         break;
       case "llNext":
         await this.llNext(ws);
@@ -3540,6 +3602,8 @@ export class GameRoom extends DurableObject<Env> {
       sub: "play",
       round: 0,
       roundStartedAt: 0,
+      target: LL_TARGETS[order.length] ?? 3,
+      lastWinner: null,
       order,
       turnIndex: 0,
       deck: [],
@@ -3549,6 +3613,10 @@ export class GameRoom extends DurableObject<Env> {
       discards: {},
       tokens,
       peeks: {},
+      protected: {},
+      pending: null,
+      burned: [],
+      burnedUp: [],
       winnerId: null,
       tied: false,
     };
@@ -3558,8 +3626,8 @@ export class GameRoom extends DurableObject<Env> {
     this.system(
       state,
       state.lang === "zh"
-        ? "情书开局 — 轮到你时抽一张、打一张，用技能淘汰所有人，先拿 3 个信物获胜！"
-        : "Love Letter started — draw one, play one, outlast everyone. First to 3 tokens wins!",
+        ? `情书开局 — 轮到你时抽一张、打一张，用技能淘汰所有人，先拿 ${state.loveletter.target} 个信物获胜！`
+        : `Love Letter started — draw one, play one, outlast everyone. First to ${state.loveletter.target} tokens wins!`,
     );
     this.save(state);
     this.broadcast(state);
@@ -3569,6 +3637,19 @@ export class GameRoom extends DurableObject<Env> {
     const ll = state.loveletter;
     if (!ll) return;
     const deck = this.shuffleIds(LL_DECK.map((_, i) => String(i))).map((s) => LL_DECK[Number(s)]);
+    // Official setup: one card aside face-down every round; with two players
+    // three more aside face-up so elimination cannot prove the deck out.
+    const burned: LLCard[] = [];
+    const burnedUp: LLCard[] = [];
+    const firstBurn = deck.pop();
+    if (firstBurn !== undefined) burned.push(firstBurn);
+    if (ll.order.length === 2) {
+      for (let i = 0; i < 3; i += 1) {
+        const extra = deck.pop();
+        if (extra === undefined) break;
+        burnedUp.push(extra);
+      }
+    }
     const hands: Record<string, LLCard> = {};
     const alive: Record<string, boolean> = {};
     const discards: Record<string, LLCard[]> = {};
@@ -3581,13 +3662,17 @@ export class GameRoom extends DurableObject<Env> {
     }
     ll.round += 1;
     ll.roundStartedAt = Date.now();
-    ll.turnIndex = 0;
+    ll.turnIndex = ll.lastWinner ? Math.max(0, ll.order.indexOf(ll.lastWinner)) : 0;
     ll.deck = deck;
     ll.hands = hands;
     ll.drawn = null;
     ll.alive = alive;
     ll.discards = discards;
     ll.peeks = {};
+    ll.protected = {};
+    ll.pending = null;
+    ll.burned = burned;
+    ll.burnedUp = burnedUp;
     ll.winnerId = null;
     ll.tied = false;
     ll.sub = "play";
@@ -3616,6 +3701,8 @@ export class GameRoom extends DurableObject<Env> {
       this.llAdvanceTurn(state);
       return;
     }
+    // Handmaid immunity lapses when your next turn begins.
+    ll.protected[current] = false;
     if (ll.deck.length === 0) {
       this.llEndRoundByShowdown(state);
     }
@@ -3625,7 +3712,7 @@ export class GameRoom extends DurableObject<Env> {
   // player, or ends the round by showdown when the deck runs out first.
   private llDealFor(state: RoomState, pid: string): boolean {
     const ll = state.loveletter;
-    if (!ll || ll.sub !== "play") return false;
+    if (!ll || ll.sub !== "play" || ll.pending) return false;
     if (ll.order[ll.turnIndex] !== pid || !ll.alive[pid] || ll.drawn !== null) return false;
     const card = ll.deck.pop();
     if (card === undefined) {
@@ -3665,6 +3752,7 @@ export class GameRoom extends DurableObject<Env> {
     const ll = state.loveletter;
     if (!ll || !ll.alive[playerId]) return;
     ll.alive[playerId] = false;
+    ll.protected[playerId] = false;
     const hand = ll.hands[playerId];
     if (hand !== undefined) {
       ll.discards[playerId] = [...(ll.discards[playerId] ?? []), hand];
@@ -3680,19 +3768,47 @@ export class GameRoom extends DurableObject<Env> {
     ll.tokens[winnerId] = (ll.tokens[winnerId] ?? 0) + 1;
     ll.winnerId = winnerId;
     ll.tied = false;
+    ll.lastWinner = winnerId;
     const name = this.playerName(state, winnerId);
     const count = ll.tokens[winnerId];
     this.system(
       state,
       state.lang === "zh"
-        ? `${name} 拿下本轮！信物 ${count}/${LL_TARGET_TOKENS}`
-        : `${name} wins the round! Tokens ${count}/${LL_TARGET_TOKENS}`,
+        ? `${name} 拿下本轮！信物 ${count}/${ll.target}`
+        : `${name} wins the round! Tokens ${count}/${ll.target}`,
     );
-    if (count >= LL_TARGET_TOKENS) {
+    this.llSpyBonus(state);
+    this.llCheckGameEnd(state);
+  }
+
+  // Spy bonus: the only player still in who played or discarded a Spy this
+  // round gains an extra favor token — even on tied rounds.
+  private llSpyBonus(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll) return;
+    const spies = this.llAliveIds(ll).filter((id) => (ll.discards[id] ?? []).includes("spy"));
+    if (spies.length !== 1) return;
+    const id = spies[0];
+    ll.tokens[id] = (ll.tokens[id] ?? 0) + 1;
+    const name = this.playerName(state, id);
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `${name} 是本轮唯一出过间谍的人，额外 +1 信物（${ll.tokens[id]}/${ll.target}）！`
+        : `${name} is the only one who played a Spy — bonus token (${ll.tokens[id]}/${ll.target})!`,
+    );
+  }
+
+  private llCheckGameEnd(state: RoomState): void {
+    const ll = state.loveletter;
+    if (!ll) return;
+    if (Object.values(ll.tokens).some((count) => count >= ll.target)) {
       ll.sub = "score";
       this.system(
         state,
-        state.lang === "zh" ? `${name} 先拿到 ${LL_TARGET_TOKENS} 个信物，赢得整局！` : `${name} reaches ${LL_TARGET_TOKENS} tokens and wins the game!`,
+        state.lang === "zh"
+          ? `有人先拿到 ${ll.target} 个信物，游戏结束！`
+          : `Someone reaches ${ll.target} tokens — game over!`,
       );
     } else {
       ll.sub = "reveal";
@@ -3712,6 +3828,8 @@ export class GameRoom extends DurableObject<Env> {
         ll.tied = true;
         ll.sub = "reveal";
         this.system(state, state.lang === "zh" ? "本轮无人存活 — 平局，无信物。" : "No one survives — tied round, no token.");
+        this.llSpyBonus(state);
+        this.llCheckGameEnd(state);
       }
       return true;
     }
@@ -3738,8 +3856,11 @@ export class GameRoom extends DurableObject<Env> {
     } else {
       ll.winnerId = null;
       ll.tied = true;
-      ll.sub = "reveal";
+      // Official: on a tie, randomly decide among the tied players who starts next.
+      ll.lastWinner = winners[crypto.getRandomValues(new Uint32Array(1))[0] % winners.length] ?? null;
       this.system(state, state.lang === "zh" ? "牌堆见底，最高牌打平 — 本轮无信物。" : "Deck exhausted with a tie on top — no token this round.");
+      this.llSpyBonus(state);
+      this.llCheckGameEnd(state);
     }
   }
 
@@ -3747,15 +3868,23 @@ export class GameRoom extends DurableObject<Env> {
   // round. Returns false when the play is illegal (turn, card, or target).
   private llApplyPlay(state: RoomState, pid: string, play: LLCard, targetId: string, guess: string): boolean {
     const ll = state.loveletter;
-    if (!ll || ll.sub !== "play") return false;
+    if (!ll || ll.sub !== "play" || ll.pending) return false;
     if (ll.order[ll.turnIndex] !== pid || !ll.alive[pid]) return false;
     const held = this.llHeldCards(state, pid);
     if (held.length !== 2 || !held.includes(play)) return false;
-    const needsTarget = play === "guard" || play === "priest" || play === "baron" || play === "prince";
-    if (needsTarget && (!targetId || !ll.alive[targetId])) return false;
-    if ((play === "guard" || play === "priest" || play === "baron") && targetId === pid) return false;
-    if (play === "guard" && guess !== "priest" && guess !== "baron" && guess !== "prince" && guess !== "princess") {
+    // Countess must be played while holding the King or the Prince.
+    if (held.includes("countess") && (held.includes("king") || held.includes("prince")) && play !== "countess") {
       return false;
+    }
+    const needsTarget = play === "guard" || play === "priest" || play === "baron" || play === "prince" || play === "king";
+    // Handmaid immunity blocks every other player's card, Prince included.
+    if (needsTarget && (!targetId || !ll.alive[targetId] || ll.protected[targetId])) return false;
+    if ((play === "guard" || play === "priest" || play === "baron" || play === "king") && targetId === pid) {
+      return false;
+    }
+    if (play === "guard") {
+      const g = guess as LLCard;
+      if (g === "guard" || !LL_DECK.includes(g)) return false;
     }
     const kept = held[0] === play ? held[1] : held[0];
     ll.drawn = null;
@@ -3792,6 +3921,12 @@ export class GameRoom extends DurableObject<Env> {
       } else {
         this.system(state, zh ? `${actor} 和 ${targetName} 比牌打平，都没事。` : `${actor} ties ${targetName} — both survive.`);
       }
+    } else if (play === "handmaid") {
+      ll.protected[pid] = true;
+      this.system(
+        state,
+        zh ? `${actor} 打出侍女 — 到下回合前不受任何牌影响！` : `${actor} plays Handmaid — immune until next turn!`,
+      );
     } else if (play === "prince") {
       const targetName = this.playerName(state, targetId);
       const discarded = ll.hands[targetId];
@@ -3813,9 +3948,78 @@ export class GameRoom extends DurableObject<Env> {
           this.system(state, zh ? `${targetName} 被迫弃牌并重抽一张。` : `${targetName} discards and draws a new hand.`);
         }
       }
+    } else if (play === "chancellor") {
+      const extras: LLCard[] = [];
+      for (let i = 0; i < 2; i += 1) {
+        const extra = ll.deck.pop();
+        if (extra === undefined) break;
+        extras.push(extra);
+      }
+      if (extras.length === 0) {
+        this.system(
+          state,
+          zh ? `${actor} 打出宰相，但牌堆已空，无牌可换。` : `${actor} plays Chancellor with an empty deck — nothing happens.`,
+        );
+      } else {
+        ll.pending = { pid, choices: [ll.hands[pid], ...extras] };
+        delete ll.hands[pid];
+        this.system(
+          state,
+          zh ? `${actor} 打出宰相，正在三选一…` : `${actor} plays Chancellor and chooses one of three…`,
+        );
+        return true; // the turn resumes once the llChancellor choice lands
+      }
+    } else if (play === "king") {
+      const targetName = this.playerName(state, targetId);
+      const mine = ll.hands[pid];
+      ll.hands[pid] = ll.hands[targetId];
+      ll.hands[targetId] = mine;
+      this.system(
+        state,
+        zh ? `${actor} 与 ${targetName} 交换了手牌！` : `${actor} trades hands with ${targetName}!`,
+      );
+    } else if (play === "spy" || play === "countess") {
+      const cardName = LL_NAMES[state.lang][play];
+      this.system(state, zh ? `${actor} 打出了${cardName}（无效果）。` : `${actor} plays ${cardName} (no effect).`);
     }
     if (!this.llCheckRoundEnd(state)) this.llAdvanceTurn(state);
     return true;
+  }
+
+  // Testable core of the Chancellor choice: keep one of the three cards and
+  // stack the other two at the bottom of the deck, chosen order on top.
+  private llResolveChancellor(state: RoomState, pid: string, payload: Record<string, unknown>): boolean {
+    const ll = state.loveletter;
+    const pending = ll?.pending;
+    if (!ll || ll.sub !== "play" || !pending || pending.pid !== pid) return false;
+    const n = pending.choices.length;
+    const keep = typeof payload.keepIndex === "number" ? Math.floor(payload.keepIndex) : -1;
+    const first = typeof payload.firstIndex === "number" ? Math.floor(payload.firstIndex) : -1;
+    if (keep < 0 || keep >= n || first < 0 || first >= n || first === keep) return false;
+    const others = pending.choices.map((_, i) => i).filter((i) => i !== keep);
+    if (!others.includes(first)) return false;
+    const deeper = others.find((i) => i !== first);
+    ll.hands[pid] = pending.choices[keep];
+    ll.deck = [...(deeper === undefined ? [] : [pending.choices[deeper]]), ...ll.deck, pending.choices[first]];
+    ll.pending = null;
+    this.system(
+      state,
+      state.lang === "zh"
+        ? `${this.playerName(state, pid)} 留下一张，把两张垫入了牌堆底。`
+        : `${this.playerName(state, pid)} keeps one card and bottoms two.`,
+    );
+    if (!this.llCheckRoundEnd(state)) this.llAdvanceTurn(state);
+    return true;
+  }
+
+  private async llChancellor(ws: WebSocket, payload: unknown): Promise<void> {
+    const session = this.session(ws);
+    const state = this.load();
+    if (!session || state.game !== "loveletter" || state.phase !== "playing" || !isRecord(payload)) return;
+    if (!this.llResolveChancellor(state, session.playerId, payload)) return;
+    this.save(state);
+    this.broadcast(state);
+    await this.schedule(state);
   }
 
   private async llPlay(ws: WebSocket, payload: unknown): Promise<void> {
@@ -3825,7 +4029,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!session || state.game !== "loveletter" || state.phase !== "playing" || !ll || ll.sub !== "play") return;
     if (!isRecord(payload) || typeof payload.play !== "string") return;
     const play = payload.play as LLCard;
-    if (play !== "guard" && play !== "priest" && play !== "baron" && play !== "prince" && play !== "princess") return;
+    if (!LL_DECK.includes(play)) return;
     const targetId = isRecord(payload) && typeof payload.targetId === "string" ? (payload.targetId as string) : "";
     const guess = isRecord(payload) && typeof payload.guess === "string" ? (payload.guess as string) : "";
     if (!this.llApplyPlay(state, session.playerId, play, targetId, guess)) return;
@@ -3869,9 +4073,11 @@ export class GameRoom extends DurableObject<Env> {
         alive: !!ll.alive[id],
         connected: p?.connected ?? false,
         tokens: ll.tokens[id] ?? 0,
+        protected: !!ll.protected[id],
       };
     });
     const myPeek = playerId ? ll.peeks[playerId] : undefined;
+    const myChancellor = playerId && ll.pending?.pid === playerId ? [...ll.pending.choices] : null;
     let reveal: LLView["reveal"] = null;
     if (ll.sub === "reveal") {
       reveal = ll.order
@@ -3888,21 +4094,26 @@ export class GameRoom extends DurableObject<Env> {
       sub: ll.sub,
       round: ll.round,
       roundStartedAt: ll.roundStartedAt,
-      targetTokens: LL_TARGET_TOKENS,
+      targetTokens: ll.target,
       currentId,
       currentName: currentId ? this.playerName(state, currentId) : "",
-      youPlay: ll.sub === "play" && !!playerId && currentId === playerId && ll.alive[playerId] === true,
-      hand: playerId && ll.hands[playerId] !== undefined ? ll.hands[playerId] : null,
-      drawn: playerId && currentId === playerId && ll.sub === "play" ? ll.drawn : null,
+      // While choosing the Chancellor keep, the chooser sees only the three
+      // options — their normal hand stays hidden until the choice lands.
+      youPlay:
+        ll.sub === "play" && !!playerId && currentId === playerId && ll.alive[playerId] === true && !myChancellor,
+      hand: playerId && !myChancellor && ll.hands[playerId] !== undefined ? ll.hands[playerId] : null,
+      drawn: playerId && !myChancellor && currentId === playerId && ll.sub === "play" ? ll.drawn : null,
       members,
       discards: { ...ll.discards },
       tokens: { ...ll.tokens },
       deckCount: ll.deck.length,
       peek: myPeek ? { targetName: myPeek.targetName, card: myPeek.card } : null,
+      chancellor: myChancellor,
       winnerId: ll.winnerId,
       winnerName: ll.winnerId ? this.playerName(state, ll.winnerId) : null,
       tied: ll.tied,
       reveal,
+      burnedUp: ll.sub === "reveal" ? [...ll.burnedUp] : null,
       scores,
       isSpectator,
     };
@@ -4373,6 +4584,12 @@ export class GameRoom extends DurableObject<Env> {
       ll.alive[playerId] = false;
       delete ll.hands[playerId];
       delete ll.peeks[playerId];
+      delete ll.protected[playerId];
+      if (ll.pending?.pid === playerId) {
+        // Return the unchosen Chancellor cards to the deck.
+        ll.deck = [...ll.deck, ...ll.pending.choices];
+        ll.pending = null;
+      }
       if (ll.sub === "play") {
         if (!this.llCheckRoundEnd(state) && wasCurrent) {
           ll.drawn = null;

@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 
-export type LLCard = "guard" | "priest" | "baron" | "prince" | "princess";
+export type LLCard =
+  | "spy"
+  | "guard"
+  | "priest"
+  | "baron"
+  | "handmaid"
+  | "prince"
+  | "chancellor"
+  | "king"
+  | "countess"
+  | "princess";
 
 export type LLMemberView = {
   id: string;
@@ -9,6 +19,7 @@ export type LLMemberView = {
   alive: boolean;
   connected: boolean;
   tokens: number;
+  protected: boolean;
 };
 
 export type LLView = {
@@ -26,10 +37,12 @@ export type LLView = {
   tokens: Record<string, number>;
   deckCount: number;
   peek: { targetName: string; card: LLCard } | null;
+  chancellor: LLCard[] | null;
   winnerId: string | null;
   winnerName: string | null;
   tied: boolean;
   reveal: Array<{ id: string; name: string; card: LLCard }> | null;
+  burnedUp: LLCard[] | null;
   scores: Array<{ name: string; tokens: number }> | null;
   isSpectator: boolean;
 };
@@ -54,34 +67,98 @@ type Props = {
 type Lang = "en" | "zh";
 
 const CARD_NAMES: Record<Lang, Record<LLCard, string>> = {
-  en: { guard: "Guard", priest: "Priest", baron: "Baron", prince: "Prince", princess: "Princess" },
-  zh: { guard: "守卫", priest: "祭司", baron: "男爵", prince: "王子", princess: "公主" },
+  en: {
+    spy: "Spy",
+    guard: "Guard",
+    priest: "Priest",
+    baron: "Baron",
+    handmaid: "Handmaid",
+    prince: "Prince",
+    chancellor: "Chancellor",
+    king: "King",
+    countess: "Countess",
+    princess: "Princess",
+  },
+  zh: {
+    spy: "间谍",
+    guard: "守卫",
+    priest: "祭司",
+    baron: "男爵",
+    handmaid: "侍女",
+    prince: "王子",
+    chancellor: "宰相",
+    king: "国王",
+    countess: "伯爵夫人",
+    princess: "公主",
+  },
 };
 
 // Higher rank wins Barons and round showdowns. Mirrors LL_RANKS in worker/index.ts.
-const CARD_RANKS: Record<LLCard, number> = { guard: 1, priest: 2, baron: 3, prince: 4, princess: 5 };
+const CARD_RANKS: Record<LLCard, number> = {
+  spy: 0,
+  guard: 1,
+  priest: 2,
+  baron: 3,
+  handmaid: 4,
+  prince: 5,
+  chancellor: 6,
+  king: 7,
+  countess: 8,
+  princess: 9,
+};
 
-// Copies of each card in the 20-card deck. Keep in sync with LL_DECK in worker/index.ts.
-const CARD_COUNTS: Record<LLCard, number> = { guard: 8, priest: 4, baron: 4, prince: 3, princess: 1 };
+// Copies of each card in the 21-card deck. Keep in sync with LL_DECK in worker/index.ts.
+const CARD_COUNTS: Record<LLCard, number> = {
+  spy: 2,
+  guard: 6,
+  priest: 2,
+  baron: 2,
+  handmaid: 2,
+  prince: 2,
+  chancellor: 2,
+  king: 1,
+  countess: 1,
+  princess: 1,
+};
 
 const CARD_POWER: Record<Lang, Record<LLCard, string>> = {
   en: {
-    guard: "Guess a hand — a hit knocks them out",
+    spy: "No effect. Lone spy at round end: +1 token",
+    guard: "Name any non-Guard card — a hit knocks them out",
     priest: "Peek at one player's hand",
     baron: "Compare hands — lower is out",
+    handmaid: "Immune to all cards until your next turn",
     prince: "Someone discards and redraws",
+    chancellor: "Draw two more, keep one of three, stack rest at bottom",
+    king: "Trade hands with another player",
+    countess: "Must play while holding King or Prince",
     princess: "Lose if you play or discard it",
   },
   zh: {
-    guard: "猜一人的底牌，猜中即淘汰",
+    spy: "无效果。终局唯一出过间谍者 +1 信物",
+    guard: "猜任意非守卫牌，猜中即淘汰",
     priest: "偷看一位玩家的底牌",
     baron: "和一人比大小，小者出局",
+    handmaid: "到你的下回合前不受任何牌影响",
     prince: "指定一人弃牌并重抽",
+    chancellor: "再抽两张，三选一保留，其余按序垫底",
+    king: "与一名玩家交换手牌",
+    countess: "与国王或王子同持时必须打出",
     princess: "打出或被弃即出局",
   },
 };
 
-const GUESS_CHOICES: LLCard[] = ["priest", "baron", "prince", "princess"];
+const GUESS_CHOICES: LLCard[] = [
+  "spy",
+  "priest",
+  "baron",
+  "handmaid",
+  "prince",
+  "chancellor",
+  "king",
+  "countess",
+  "princess",
+];
 
 export default function LoveLetterGame({ view, myId, isHost, lang, send, messages = [] }: Props) {
   const zh = lang === "zh";
@@ -113,6 +190,9 @@ function SeatTable({ view, lang }: { view: LLView; lang: Lang }) {
             <div className="ll-seat-top">
               <span className="ll-dot" style={{ background: m.color }} />
               <span>{m.name}</span>
+              {m.alive && m.protected ? (
+                <span title={lang === "zh" ? "侍女保护中，不吃任何牌" : "Handmaid shield — untargetable"}>🛡️</span>
+              ) : null}
               <span className="ll-tokens">{m.tokens}/{view.targetTokens}</span>
             </div>
             <div className="ll-seat-sub">
@@ -149,7 +229,18 @@ function ActionBanner({ feed }: { feed: LLFeedMsg[] }) {
 
 function LLHelp({ lang, targetTokens }: { lang: Lang; targetTokens: number }) {
   const zh = lang === "zh";
-  const order: LLCard[] = ["guard", "priest", "baron", "prince", "princess"];
+  const order: LLCard[] = [
+    "spy",
+    "guard",
+    "priest",
+    "baron",
+    "handmaid",
+    "prince",
+    "chancellor",
+    "king",
+    "countess",
+    "princess",
+  ];
   const total = order.reduce((n, c) => n + CARD_COUNTS[c], 0);
   return (
     <details className="ll-help">
@@ -161,6 +252,11 @@ function LLHelp({ lang, targetTokens }: { lang: Lang; targetTokens: number }) {
       </p>
       <p className="muted">
         {zh ? "点数大获胜，×N 是张数。" : "Higher rank wins. ×N = copies in deck."}
+      </p>
+      <p className="muted">
+        {zh
+          ? "每轮暗置 1 张（双人局另明置 3 张）；上轮赢家先手。"
+          : "1 card burns face-down each round (3 face-up in 2-player); round winner starts next."}
       </p>
       <div className="ll-help-rows">
         {order.map((c) => (
@@ -227,6 +323,47 @@ function CardButton({
   );
 }
 
+function ChancellorStage({
+  choices,
+  lang,
+  send,
+}: {
+  choices: LLCard[];
+  lang: Lang;
+  send: Props["send"];
+}) {
+  const zh = lang === "zh";
+  const [keep, setKeep] = useState<number | null>(null);
+  useEffect(() => {
+    setKeep(null);
+  }, [choices.join(",")]);
+  const pick = (i: number) => {
+    if (keep === null) {
+      setKeep(i);
+    } else if (i !== keep) {
+      send("llChancellor", { keepIndex: keep, firstIndex: i });
+      setKeep(null);
+    }
+  };
+  const shown = keep === null ? choices.map((_, i) => i) : choices.map((_, i) => i).filter((i) => i !== keep);
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+        {shown.map((i) => (
+          <CardButton key={`${choices[i]}-${i}`} card={choices[i]} lang={lang} selected={false} onPick={() => pick(i)} />
+        ))}
+      </div>
+      {keep !== null && (
+        <p className="uc-status">
+          {zh
+            ? `保留${CARD_NAMES[lang][choices[keep]]}，再点一张作为先抽到的垫底牌。`
+            : `Keeping ${CARD_NAMES[lang][choices[keep]]} — tap one more as the first-drawn bottom card.`}
+        </p>
+      )}
+    </>
+  );
+}
+
 function LLPlay({
   view,
   myId,
@@ -261,11 +398,17 @@ function LLPlay({
   const canPlay = view.youPlay && view.drawn !== null;
   // Track the pick by position, not value, so a pair highlights only the tapped card.
   const play = playIndex !== null ? (held[playIndex] ?? null) : null;
-  const needsTarget = play === "guard" || play === "priest" || play === "baron" || play === "prince";
+  const needsTarget =
+    play === "guard" || play === "priest" || play === "baron" || play === "prince" || play === "king";
   const selfAllowed = play === "prince";
-  const targets = view.members.filter((m) => m.alive && (selfAllowed || m.id !== myId));
+  const targets = view.members.filter((m) => m.alive && !m.protected && (selfAllowed || m.id !== myId));
+  const mustCountess = held.includes("countess") && (held.includes("king") || held.includes("prince"));
   const canConfirm =
-    canPlay && play !== null && (!needsTarget || target !== "") && (play !== "guard" || guess !== null);
+    canPlay &&
+    play !== null &&
+    (!mustCountess || play === "countess") &&
+    (!needsTarget || target !== "") &&
+    (play !== "guard" || guess !== null);
 
   const confirm = () => {
     if (!canConfirm || !play) return;
@@ -290,7 +433,11 @@ function LLPlay({
         {me && !me.alive && (
           <p className="uc-status">{zh ? "你本轮已出局 — 旁观中。" : "You're out this round — spectating."}</p>
         )}
-        {view.youPlay ? (
+        {view.chancellor ? (
+          <p className="uc-status">
+            {zh ? "宰相：先选一张保留，再选一张先被抽到：" : "Chancellor — keep one, then pick which is drawn first:"}
+          </p>
+        ) : view.youPlay ? (
           <p className="uc-status">
             {view.drawn
               ? zh
@@ -311,6 +458,7 @@ function LLPlay({
                 : "Waiting…"}
           </p>
         )}
+        {view.chancellor && <ChancellorStage choices={view.chancellor} lang={lang} send={send} />}
         {view.peek && (
           <p className="sb-prompt" style={{ fontSize: 15, textAlign: "center" }}>
             👀 {view.peek.targetName}: {CARD_NAMES[lang][view.peek.card]} · {CARD_RANKS[view.peek.card]}
@@ -328,7 +476,7 @@ function LLPlay({
                     card={card}
                     lang={lang}
                     selected={canPlay && playIndex === i}
-                    disabled={!canPlay}
+                    disabled={!canPlay || (mustCountess && card !== "countess")}
                     onPick={() => {
                       if (!canPlay) return;
                       setPlayIndex(i);
@@ -346,6 +494,11 @@ function LLPlay({
                 );
               })}
             </div>
+            {canPlay && mustCountess && (
+              <p className="uc-status">
+                {zh ? "手握国王/王子，必须打出伯爵夫人！" : "Holding King/Prince — Countess must be played!"}
+              </p>
+            )}
             {canDraw && (
               <button className="primary" onClick={() => send("llDraw")} style={{ marginTop: 4 }}>
                 {zh ? "抽一张牌" : "Draw a card"}
@@ -437,6 +590,12 @@ function LLReveal({
             </div>
           ))}
         </div>
+        {view.burnedUp && view.burnedUp.length > 0 && (
+          <p className="muted" style={{ fontSize: 13 }}>
+            {zh ? "明置牌：" : "Face-up discards: "}
+            {view.burnedUp.map((c) => CARD_NAMES[lang][c]).join(" · ")}
+          </p>
+        )}
         {isHost ? (
           <button className="primary" onClick={() => send("llNext")}>
             {zh ? "下一轮 →" : "Next round →"}

@@ -7,6 +7,23 @@ type GameMode = "pictionary" | "charades" | "mixed";
 type RoundMode = "pictionary" | "charades";
 type Phase = "lobby" | "choosing" | "playing" | "roundEnd" | "gameEnd" | "teams";
 
+// Every game id the lobby can select. Rooms persisted under a removed game
+// (e.g. a retired experiment) fall back to the lobby instead of bricking.
+const KNOWN_GAMES: ReadonlySet<string> = new Set([
+  "classic",
+  "passthepen",
+  "yarnpals",
+  "undercover",
+  "wavelength",
+  "fakeartist",
+  "telephone",
+  "punchline",
+  "balderdash",
+  "emoji",
+  "slipup",
+  "loveletter",
+]);
+
 type Player = {
   id: string;
   name: string;
@@ -5169,6 +5186,16 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  // Heal rooms persisted under a removed game id: send them back to a fresh
+  // lobby instead of broadcasting a game the client cannot render.
+  private healRoomState(state: RoomState): void {
+    if (KNOWN_GAMES.has(state.game)) return;
+    state.game = "classic";
+    state.phase = "lobby";
+    state.round = null;
+    delete (state as unknown as Record<string, unknown>).salmonrush;
+  }
+
   private load(): RoomState {
     this.ensureSchema();
     const row = this.ctx.storage.sql
@@ -5197,6 +5224,7 @@ export class GameRoom extends DurableObject<Env> {
       if ((parsed as unknown as Record<string, unknown>).slipup === undefined) {
         parsed.slipup = null;
       }
+      this.healRoomState(parsed);
       if (parsed.phase === "lobby" && parsed.game === "classic" && parsed.mode === "mixed") {
         parsed.mode = "pictionary";
       }

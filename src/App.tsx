@@ -683,9 +683,12 @@ export default function App() {
   const game = snapshot?.game ?? "classic";
   const round = snapshot?.round ?? null;
   const classicMode = snapshot?.mode === "charades" ? "charades" : "pictionary";
-  const selectedGameLabel = game === "classic" ? MODE_LABELS[uiLang][classicMode] : GAME_LABELS[uiLang][game];
+  const selectedGameLabel =
+    game === "classic" ? MODE_LABELS[uiLang][classicMode] : (GAME_LABELS[uiLang][game] ?? GAME_LABELS[uiLang].classic);
   const selectedGameInfo =
-    game === "classic" && classicMode === "charades" ? CHARADES_INFO[uiLang] : GAME_INFO[uiLang][game];
+    game === "classic" && classicMode === "charades"
+      ? CHARADES_INFO[uiLang]
+      : (GAME_INFO[uiLang][game] ?? GAME_INFO[uiLang].classic);
   const performer = players.find((player) => player.id === round?.performerId);
   const canGuess = phase === "playing" && !!snapshot?.youGuess && !me?.guessed;
   const minPlayers =

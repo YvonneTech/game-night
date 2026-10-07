@@ -301,6 +301,17 @@ describe("second edition powers", () => {
     assert.notEqual(state.loveletter.pending, null);
   });
 
+  it("round winner with a lone spy nets two tokens", () => {
+    const state = makeState({
+      alive: { a: true, b: false, c: false },
+      hands: { a: "baron" },
+      drawn: null,
+      discards: { a: ["spy"], b: ["guard"], c: [] },
+    });
+    assert.equal(room.llCheckRoundEnd(state), true);
+    assert.deepEqual(state.loveletter.tokens, { a: 2, b: 0, c: 0 });
+  });
+
   it("lone spy at round end earns a bonus token", () => {
     const state = makeState({ discards: { a: ["spy"], b: ["guard"], c: ["priest"] } });
     room.llSpyBonus(state);

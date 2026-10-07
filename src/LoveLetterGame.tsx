@@ -461,7 +461,7 @@ function LLPlay({
         {view.chancellor && <ChancellorStage choices={view.chancellor} lang={lang} send={send} />}
         {view.peek && (
           <p className="sb-prompt" style={{ fontSize: 15, textAlign: "center" }}>
-            👀 {view.peek.targetName}: {CARD_NAMES[lang][view.peek.card]} · {CARD_RANKS[view.peek.card]}
+            👀 {view.peek.targetName}: {CARD_NAMES[lang][view.peek.card]}
           </p>
         )}
         {(canPlay ? held.length > 0 : view.hand !== null) && (
@@ -584,9 +584,7 @@ function LLReveal({
           {reveal.map((r) => (
             <div key={r.id} className="tp-reveal-item" style={{ display: "flex", justifyContent: "space-between" }}>
               <span className="tp-step-tag">{r.name}</span>
-              <strong>
-                {CARD_NAMES[lang][r.card]} · {CARD_RANKS[r.card]}
-              </strong>
+              <strong>{CARD_NAMES[lang][r.card]}</strong>
             </div>
           ))}
         </div>
